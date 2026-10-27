@@ -1,6 +1,6 @@
 // Service worker simples: guarda a "casca" do app para abrir rápido.
 // Os dados (login e banco) sempre vêm da internet.
-const VERSAO = 'siscautela-v1';
+const VERSAO = 'siscautela-v2';
 const CASCA = [
   './',
   'index.html',
