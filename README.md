@@ -10,8 +10,8 @@ painel da frota ainda não foram implementados.
 
 | Peça | Ferramenta |
 |---|---|
-| Código | Este repositório (GitHub, privado) |
-| Hospedagem | Firebase Hosting (plano Spark) |
+| Código | Este repositório (GitHub, público) |
+| Hospedagem | GitHub Pages — publicação automática a cada alteração |
 | Login | Firebase Authentication — e-mail e senha |
 | Banco de dados | Cloud Firestore — `southamerica-east1` (São Paulo) |
 | Fotos | Google Drive da conta do projeto, via ponte Apps Script (a fazer) |
@@ -22,7 +22,7 @@ Conta dona de tudo: `siscautela.esfo@gmail.com` — nunca vincular cartão de cr
 ## Estrutura
 
 ```
-public/                 app (o que vai para o Firebase Hosting)
+public/                 app (o que vai para o GitHub Pages)
   index.html            telas
   css/estilo.css
   js/app.js             lógica de login, primeiro acesso e ativação
@@ -55,15 +55,16 @@ minúsculas → campos (todos texto): `numero`, `nomeGuerra`, `curso`, `turma`, 
 
 ## Publicar
 
-Requer Node.js 20+ no computador.
+**App:** https://siscautelaesfo-commits.github.io/siscautela/
 
-```bash
-npm install -g firebase-tools
-firebase login            # com a conta siscautela.esfo@gmail.com
-firebase deploy           # publica o app (hosting) e as regras do Firestore
-```
+Qualquer alteração na pasta `public/` da branch `main` é publicada automaticamente pelo
+GitHub Actions (`.github/workflows/pages.yml`), em cerca de 1 minuto.
 
-Endereço do app: https://siscautela-esfo.web.app
+**Regras do banco:** não são publicadas automaticamente. Depois de alterar `firestore.rules`,
+copie o conteúdo para Console do Firebase → Firestore → Regras → Publicar.
+
+O domínio `siscautelaesfo-commits.github.io` está autorizado em Authentication → Configurações →
+Domínios autorizados.
 
 ## Testar as regras
 
