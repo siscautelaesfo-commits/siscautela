@@ -1,0 +1,14 @@
+{
+  "name": "siscautela",
+  "private": true,
+  "type": "module",
+  "description": "SisCautela EsFO - testes das regras do Firestore",
+  "scripts": {
+    "test:regras": "firebase emulators:exec --only firestore --project demo-siscautela \"node --test tests/\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "firebase": "^13.1.0",
+    "firebase-tools": "^15.0.0"
+  }
+}
