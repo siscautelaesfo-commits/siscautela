@@ -1,0 +1,14 @@
+{
+  "name": "SisCautela EsFO",
+  "short_name": "SisCautela",
+  "description": "Cautela de viaturas da EsFO",
+  "lang": "pt-BR",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f2ec",
+  "theme_color": "#1f3a2e",
+  "icons": [
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
