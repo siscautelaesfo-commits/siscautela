@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Regras de segurança do SisCautela EsFO — versão 0.1
+// Regras de segurança do SisCautela EsFO — versão 0.2 (autocadastro com aprovação)
 // Princípio: tudo é bloqueado, exceto o que está liberado abaixo.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -12,14 +12,8 @@ service cloud.firestore {
     function emailConfirmado() {
       return logado() && request.auth.token.email_verified == true;
     }
-    function meuEmail() {
-      return request.auth.token.email.lower();
-    }
     function caminhoUsuario(uid) {
       return /databases/$(database)/documents/usuarios/$(uid);
-    }
-    function caminhoPre(email) {
-      return /databases/$(database)/documents/precadastro/$(email);
     }
     function eu() {
       return get(caminhoUsuario(request.auth.uid)).data;
@@ -35,57 +29,56 @@ service cloud.firestore {
     function gestao() {
       return temPerfil(['gestor', 'admin']);
     }
-
-    // ---------- pré-cadastro (lançado pelo gestor) ----------
-    // ID do documento = e-mail em minúsculas.
-    match /precadastro/{email} {
-      // O próprio militar só lê o seu pré-cadastro, e só depois de confirmar o e-mail.
-      allow get: if gestao() || (emailConfirmado() && email == meuEmail());
-      allow list: if gestao();
-
-      allow create: if gestao()
-        && request.resource.data.situacao == 'pendente'
-        && request.resource.data.email == email
-        && request.resource.data.perfil in ['usuario', 'conferente', 'gestor', 'admin'];
-
-      // O militar marca o próprio pré-cadastro como ativado, no mesmo lote em que cria o usuário.
-      allow update: if gestao()
-        || (emailConfirmado()
-            && email == meuEmail()
-            && resource.data.situacao == 'pendente'
-            && request.resource.data.diff(resource.data).affectedKeys()
-                 .hasOnly(['situacao', 'uid', 'ativadoEm'])
-            && request.resource.data.situacao == 'ativado'
-            && request.resource.data.uid == request.auth.uid
-            && request.resource.data.ativadoEm == request.time
-            && existsAfter(caminhoUsuario(request.auth.uid)));
-
-      allow delete: if gestao();
+    function souAdmin() {
+      return temPerfil(['admin']);
     }
 
-    // ---------- usuários ativos ----------
+    // Dados que o próprio militar informa no cadastro.
+    function dadosValidos(d) {
+      return d.numero is string && d.numero.matches('^[0-9]{1,10}$')
+        && d.nomeGuerra is string && d.nomeGuerra.size() >= 2 && d.nomeGuerra.size() <= 40
+        && d.curso in ['CFO', 'CHOE']
+        && d.turma is string && d.turma.size() >= 1 && d.turma.size() <= 40;
+    }
+
+    // ---------- usuários ----------
     match /usuarios/{uid} {
       allow get: if (logado() && uid == request.auth.uid) || temPerfil(['conferente', 'gestor', 'admin']);
       allow list: if temPerfil(['conferente', 'gestor', 'admin']);
 
-      // Ativação: o militar cria o próprio cadastro copiando exatamente o pré-cadastro.
+      // Autocadastro: só o próprio militar, com e-mail confirmado,
+      // sempre como "usuario" e "pendente" (aguardando aprovação).
       allow create: if emailConfirmado()
         && uid == request.auth.uid
-        && exists(caminhoPre(meuEmail()))
-        && get(caminhoPre(meuEmail())).data.situacao == 'pendente'
         && request.resource.data.keys().hasOnly(
-             ['numero', 'nomeGuerra', 'curso', 'turma', 'perfil', 'email', 'situacao', 'ativadoEm'])
-        && request.resource.data.numero == get(caminhoPre(meuEmail())).data.numero
-        && request.resource.data.nomeGuerra == get(caminhoPre(meuEmail())).data.nomeGuerra
-        && request.resource.data.curso == get(caminhoPre(meuEmail())).data.curso
-        && request.resource.data.turma == get(caminhoPre(meuEmail())).data.turma
-        && request.resource.data.perfil == get(caminhoPre(meuEmail())).data.perfil
-        && request.resource.data.email == meuEmail()
-        && request.resource.data.situacao == 'ativo'
-        && request.resource.data.ativadoEm == request.time;
+             ['numero', 'nomeGuerra', 'curso', 'turma', 'email', 'perfil', 'situacao', 'criadoEm'])
+        && dadosValidos(request.resource.data)
+        && request.resource.data.email == request.auth.token.email.lower()
+        && request.resource.data.perfil == 'usuario'
+        && request.resource.data.situacao == 'pendente'
+        && request.resource.data.criadoEm == request.time;
 
-      // Só a gestão altera usuários (perfil, desativação na formatura etc.).
-      allow update: if gestao();
+      // Enquanto pendente, o próprio militar pode corrigir os seus dados.
+      allow update: if logado() && uid == request.auth.uid
+        && resource.data.situacao == 'pendente'
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['numero', 'nomeGuerra', 'curso', 'turma'])
+        && dadosValidos(request.resource.data);
+
+      // Gestão: aprova, recusa, desativa, reativa e define o perfil.
+      // Ninguém altera o próprio cadastro; gestor só lida com usuário/conferente; admin com todos.
+      allow update: if gestao()
+        && uid != request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+             .hasOnly(['situacao', 'perfil', 'decididoPor', 'decididoEm'])
+        && request.resource.data.situacao in ['ativo', 'recusado', 'desativado']
+        && request.resource.data.perfil in ['usuario', 'conferente', 'gestor', 'admin']
+        && request.resource.data.decididoPor == request.auth.uid
+        && request.resource.data.decididoEm == request.time
+        && (souAdmin()
+            || (resource.data.perfil in ['usuario', 'conferente']
+                && request.resource.data.perfil in ['usuario', 'conferente']));
+
       allow delete: if false;
     }
 
