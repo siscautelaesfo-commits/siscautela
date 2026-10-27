@@ -48,11 +48,27 @@
       </p>
     </section>
 
-    <!-- Primeiro acesso -->
+    <!-- Primeiro acesso: cria login e guarda os dados do cadastro -->
     <section id="tela-primeiro-acesso" class="tela">
       <h1>Primeiro acesso</h1>
-      <p>Use o mesmo e-mail informado ao gestor no pré-cadastro. Você receberá um link de confirmação.</p>
+      <p>Preencha seus dados. Depois de confirmar o e-mail, o cadastro vai para aprovação do gestor.</p>
       <form id="form-primeiro-acesso" novalidate>
+        <label>Número de cadete / aluno
+          <input type="text" name="numero" inputmode="numeric" autocomplete="off" maxlength="10" required>
+        </label>
+        <label>Nome de guerra
+          <input type="text" name="nomeGuerra" autocomplete="off" maxlength="40" required>
+        </label>
+        <label>Curso
+          <select name="curso" required>
+            <option value="">Selecione</option>
+            <option value="CFO">CFO</option>
+            <option value="CHOE">CHOE</option>
+          </select>
+        </label>
+        <label>Turma / pelotão
+          <input type="text" name="turma" placeholder="Ex.: 1º Pel Alfa" autocomplete="off" maxlength="40" required>
+        </label>
         <label>E-mail
           <input type="email" name="email" autocomplete="username" required>
         </label>
@@ -96,22 +112,45 @@
       </div>
     </section>
 
-    <!-- Ativação: confere número funcional com o pré-cadastro -->
-    <section id="tela-ativar" class="tela">
-      <h1>Ativar acesso</h1>
-      <p>E-mail confirmado. Para concluir, informe seu número funcional, como consta no pré-cadastro.</p>
-      <form id="form-ativar" novalidate>
-        <label>Número funcional
-          <input type="text" name="numero" inputmode="numeric" autocomplete="off" required>
+    <!-- Completar / enviar cadastro (após confirmar o e-mail) -->
+    <section id="tela-completar" class="tela">
+      <h1>Enviar cadastro</h1>
+      <p>E-mail confirmado. Confira seus dados e envie para aprovação do gestor.</p>
+      <form id="form-completar" novalidate>
+        <label>Número de cadete / aluno
+          <input type="text" name="numero" inputmode="numeric" autocomplete="off" maxlength="10" required>
         </label>
-        <button type="submit" class="primario">Ativar</button>
+        <label>Nome de guerra
+          <input type="text" name="nomeGuerra" autocomplete="off" maxlength="40" required>
+        </label>
+        <label>Curso
+          <select name="curso" required>
+            <option value="">Selecione</option>
+            <option value="CFO">CFO</option>
+            <option value="CHOE">CHOE</option>
+          </select>
+        </label>
+        <label>Turma / pelotão
+          <input type="text" name="turma" placeholder="Ex.: 1º Pel Alfa" autocomplete="off" maxlength="40" required>
+        </label>
+        <button type="submit" class="primario">Enviar para aprovação</button>
       </form>
       <div class="links">
         <button type="button" class="link" data-acao="sair">Sair</button>
       </div>
     </section>
 
-    <!-- Sem acesso (não pré-cadastrado ou desativado) -->
+    <!-- Aguardando aprovação -->
+    <section id="tela-aguardando" class="tela">
+      <h1>Aguardando aprovação</h1>
+      <p>Seu cadastro foi enviado. Assim que o gestor aprovar, esta tela muda sozinha e o acesso é liberado.</p>
+      <div class="ficha" id="ficha-aguardando"></div>
+      <div class="links">
+        <button type="button" class="link" data-acao="sair">Sair</button>
+      </div>
+    </section>
+
+    <!-- Sem acesso (recusado ou desativado) -->
     <section id="tela-sem-acesso" class="tela">
       <h1>Acesso não liberado</h1>
       <p id="msg-sem-acesso"></p>
@@ -123,6 +162,9 @@
       <h1 id="saudacao">Olá</h1>
       <p class="perfil" id="info-usuario"></p>
       <div class="cartoes">
+        <button type="button" class="cartao" id="cartao-gestao" hidden>
+          <strong>Gestão de usuários</strong><span id="resumo-gestao">Aprovar cadastros e desativar contas</span>
+        </button>
         <button type="button" class="cartao" disabled>
           <strong>Nova cautela</strong><span>Em desenvolvimento</span>
         </button>
@@ -134,6 +176,21 @@
         </button>
       </div>
       <button type="button" class="secundario" data-acao="sair">Sair</button>
+    </section>
+
+    <!-- Gestão de usuários (gestor/admin) -->
+    <section id="tela-gestao" class="tela">
+      <div class="cabecalho-tela">
+        <button type="button" class="voltar" data-ir="tela-inicio" aria-label="Voltar">←</button>
+        <h1>Gestão de usuários</h1>
+      </div>
+      <div class="abas" role="tablist">
+        <button type="button" role="tab" class="aba ativa" data-filtro="pendente">Pendentes <span id="cont-pendente"></span></button>
+        <button type="button" role="tab" class="aba" data-filtro="ativo">Ativos <span id="cont-ativo"></span></button>
+        <button type="button" role="tab" class="aba" data-filtro="inativo">Inativos <span id="cont-inativo"></span></button>
+      </div>
+      <input type="search" id="busca-usuarios" class="busca" placeholder="Buscar por nome, número ou turma">
+      <div id="lista-usuarios" class="lista"></div>
     </section>
   </main>
 
