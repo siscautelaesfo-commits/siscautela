@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1f3a2e">
+  <title>SisCautela EsFO</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+  <header class="topo">
+    <img src="icons/icon.svg" alt="" class="topo-icone">
+    <div>
+      <strong>SisCautela</strong>
+      <span>EsFO · APMG</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Carregando -->
+    <section id="tela-carregando" class="tela ativa" aria-live="polite">
+      <p class="centro">Carregando…</p>
+    </section>
+
+    <!-- Login -->
+    <section id="tela-login" class="tela">
+      <h1>Entrar</h1>
+      <form id="form-login" novalidate>
+        <label>E-mail
+          <input type="email" name="email" autocomplete="username" required>
+        </label>
+        <label>Senha
+          <input type="password" name="senha" autocomplete="current-password" required>
+        </label>
+        <button type="submit" class="primario">Entrar</button>
+      </form>
+      <div class="links">
+        <button type="button" class="link" data-ir="tela-primeiro-acesso">Primeiro acesso</button>
+        <button type="button" class="link" data-ir="tela-esqueci">Esqueci a senha</button>
+      </div>
+      <p class="aviso-privacidade">
+        Sistema de uso restrito da EsFO. Os dados coletados (identificação funcional, curso,
+        turma e registros de cautela) são usados apenas para o controle das viaturas, nos termos
+        da LGPD (Lei 13.709/2018).
+      </p>
+    </section>
+
+    <!-- Primeiro acesso -->
+    <section id="tela-primeiro-acesso" class="tela">
+      <h1>Primeiro acesso</h1>
+      <p>Use o mesmo e-mail informado ao gestor no pré-cadastro. Você receberá um link de confirmação.</p>
+      <form id="form-primeiro-acesso" novalidate>
+        <label>E-mail
+          <input type="email" name="email" autocomplete="username" required>
+        </label>
+        <label>Crie uma senha (mínimo 8 caracteres)
+          <input type="password" name="senha" autocomplete="new-password" minlength="8" required>
+        </label>
+        <label>Repita a senha
+          <input type="password" name="senha2" autocomplete="new-password" minlength="8" required>
+        </label>
+        <button type="submit" class="primario">Criar acesso</button>
+      </form>
+      <div class="links">
+        <button type="button" class="link" data-ir="tela-login">Voltar</button>
+      </div>
+    </section>
+
+    <!-- Esqueci a senha -->
+    <section id="tela-esqueci" class="tela">
+      <h1>Redefinir senha</h1>
+      <p>Informe seu e-mail. Se houver acesso cadastrado, você receberá um link para criar nova senha.</p>
+      <form id="form-esqueci" novalidate>
+        <label>E-mail
+          <input type="email" name="email" autocomplete="username" required>
+        </label>
+        <button type="submit" class="primario">Enviar link</button>
+      </form>
+      <div class="links">
+        <button type="button" class="link" data-ir="tela-login">Voltar</button>
+      </div>
+    </section>
+
+    <!-- Verificar e-mail -->
+    <section id="tela-verificar" class="tela">
+      <h1>Confirme seu e-mail</h1>
+      <p>Enviamos um link de confirmação para <strong id="email-verificar"></strong>.
+         Abra o e-mail (confira também o spam), clique no link e depois volte aqui.</p>
+      <button type="button" class="primario" id="btn-ja-confirmei">Já confirmei</button>
+      <button type="button" class="secundario" id="btn-reenviar">Reenviar e-mail</button>
+      <div class="links">
+        <button type="button" class="link" data-acao="sair">Sair</button>
+      </div>
+    </section>
+
+    <!-- Ativação: confere número funcional com o pré-cadastro -->
+    <section id="tela-ativar" class="tela">
+      <h1>Ativar acesso</h1>
+      <p>E-mail confirmado. Para concluir, informe seu número funcional, como consta no pré-cadastro.</p>
+      <form id="form-ativar" novalidate>
+        <label>Número funcional
+          <input type="text" name="numero" inputmode="numeric" autocomplete="off" required>
+        </label>
+        <button type="submit" class="primario">Ativar</button>
+      </form>
+      <div class="links">
+        <button type="button" class="link" data-acao="sair">Sair</button>
+      </div>
+    </section>
+
+    <!-- Sem acesso (não pré-cadastrado ou desativado) -->
+    <section id="tela-sem-acesso" class="tela">
+      <h1>Acesso não liberado</h1>
+      <p id="msg-sem-acesso"></p>
+      <button type="button" class="secundario" data-acao="sair">Sair</button>
+    </section>
+
+    <!-- Início -->
+    <section id="tela-inicio" class="tela">
+      <h1 id="saudacao">Olá</h1>
+      <p class="perfil" id="info-usuario"></p>
+      <div class="cartoes">
+        <button type="button" class="cartao" disabled>
+          <strong>Nova cautela</strong><span>Em desenvolvimento</span>
+        </button>
+        <button type="button" class="cartao" disabled>
+          <strong>Minhas cautelas</strong><span>Em desenvolvimento</span>
+        </button>
+        <button type="button" class="cartao" disabled>
+          <strong>Situação da frota</strong><span>Em desenvolvimento</span>
+        </button>
+      </div>
+      <button type="button" class="secundario" data-acao="sair">Sair</button>
+    </section>
+  </main>
+
+  <div id="mensagem" class="mensagem" role="status" aria-live="assertive" hidden></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
