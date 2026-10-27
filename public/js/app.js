@@ -1,11 +1,11 @@
-// SisCautela EsFO — versão 0.1: login, primeiro acesso e ativação.
+// SisCautela EsFO — versão 0.2: autocadastro com aprovação do gestor.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendEmailVerification, sendPasswordResetEmail, signOut
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
 import {
-  getFirestore, doc, getDoc, writeBatch, serverTimestamp
+  getFirestore, doc, setDoc, updateDoc, collection, onSnapshot, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
@@ -14,6 +14,14 @@ const auth = getAuth(app);
 auth.languageCode = 'pt-BR';
 const db = getFirestore(app);
 
+const PERFIS = {
+  usuario: 'Usuário',
+  conferente: 'Conferente',
+  gestor: 'Gestor de frota',
+  admin: 'Administrador'
+};
+const CHAVE_RASCUNHO = 'siscautela-cadastro';
+
 // ---------- utilidades de tela ----------
 const $ = (sel) => document.querySelector(sel);
 
@@ -21,6 +29,7 @@ function mostrar(idTela) {
   document.querySelectorAll('.tela').forEach((t) => t.classList.toggle('ativa', t.id === idTela));
   window.scrollTo(0, 0);
 }
+const telaAtual = () => document.querySelector('.tela.ativa')?.id;
 
 let timerMsg;
 function mensagem(texto, erro = false) {
@@ -33,11 +42,22 @@ function mensagem(texto, erro = false) {
 }
 
 function travar(form, travado) {
-  form.querySelectorAll('button, input').forEach((el) => { el.disabled = travado; });
+  form.querySelectorAll('button, input, select').forEach((el) => { el.disabled = travado; });
+}
+
+function criar(tag, props = {}, ...filhos) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') el.className = v;
+    else if (k === 'texto') el.textContent = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v);
+  }
+  filhos.flat().forEach((f) => f && el.append(f));
+  return el;
 }
 
 const normalizarEmail = (e) => String(e || '').trim().toLowerCase();
-const somenteDigitos = (n) => String(n || '').replace(/\D/g, '');
 
 function traduzirErro(err) {
   const c = err?.code || '';
@@ -50,25 +70,73 @@ function traduzirErro(err) {
     'auth/weak-password': 'Senha fraca. Use pelo menos 8 caracteres.',
     'auth/too-many-requests': 'Muitas tentativas. Aguarde alguns minutos e tente de novo.',
     'auth/network-request-failed': 'Sem conexão com a internet.',
-    'permission-denied': 'Acesso negado pelo sistema.',
+    'permission-denied': 'Ação não permitida.',
     'unavailable': 'Sem conexão com o servidor. Tente novamente.'
   };
   return mapa[c] || 'Não foi possível concluir. Tente novamente.';
+}
+
+// ---------- dados do cadastro ----------
+function lerDados(form) {
+  return {
+    numero: String(form.numero.value || '').replace(/\D/g, ''),
+    nomeGuerra: String(form.nomeGuerra.value || '').trim().replace(/\s+/g, ' '),
+    curso: form.curso.value,
+    turma: String(form.turma.value || '').trim().replace(/\s+/g, ' ')
+  };
+}
+
+function validarDados(d) {
+  if (!/^\d{1,10}$/.test(d.numero)) return 'Informe o número (somente dígitos).';
+  if (d.nomeGuerra.length < 2 || d.nomeGuerra.length > 40) return 'Informe o nome de guerra.';
+  if (!['CFO', 'CHOE'].includes(d.curso)) return 'Selecione o curso.';
+  if (d.turma.length < 1 || d.turma.length > 40) return 'Informe a turma ou pelotão.';
+  return null;
+}
+
+function preencher(form, d) {
+  if (!d) return;
+  form.numero.value = d.numero || '';
+  form.nomeGuerra.value = d.nomeGuerra || '';
+  form.curso.value = d.curso || '';
+  form.turma.value = d.turma || '';
+}
+
+function guardarRascunho(d) {
+  try { localStorage.setItem(CHAVE_RASCUNHO, JSON.stringify(d)); } catch { /* sem armazenamento */ }
+}
+function lerRascunho() {
+  try { return JSON.parse(localStorage.getItem(CHAVE_RASCUNHO) || 'null'); } catch { return null; }
+}
+function apagarRascunho() {
+  try { localStorage.removeItem(CHAVE_RASCUNHO); } catch { /* sem armazenamento */ }
+}
+
+// ---------- estado ----------
+let eu = null;              // dados do meu usuário no banco
+let pararMeuDoc = null;     // listener do meu documento
+let pararColecao = null;    // listener da lista de usuários (gestão)
+let usuarios = [];          // lista para a gestão
+let filtro = 'pendente';
+
+const ehGestao = () => eu && eu.situacao === 'ativo' && ['gestor', 'admin'].includes(eu.perfil);
+
+function pararTudo() {
+  pararMeuDoc?.(); pararMeuDoc = null;
+  pararColecao?.(); pararColecao = null;
+  eu = null; usuarios = [];
 }
 
 // ---------- navegação por botões ----------
 document.addEventListener('click', (e) => {
   const ir = e.target.closest('[data-ir]');
   if (ir) mostrar(ir.dataset.ir);
-  const acao = e.target.closest('[data-acao="sair"]');
-  if (acao) signOut(auth);
+  if (e.target.closest('[data-acao="sair"]')) signOut(auth);
 });
 
-// ---------- roteamento conforme a situação do usuário ----------
-let preCadastroAtual = null;
-
-async function rotear(user) {
-  preCadastroAtual = null;
+// ---------- roteamento ----------
+function rotear(user) {
+  pararTudo();
   if (!user) return mostrar('tela-login');
 
   if (!user.emailVerified) {
@@ -76,37 +144,54 @@ async function rotear(user) {
     return mostrar('tela-verificar');
   }
 
-  try {
-    const usuario = await getDoc(doc(db, 'usuarios', user.uid));
-    if (usuario.exists()) {
-      const u = usuario.data();
-      if (u.situacao !== 'ativo') {
-        $('#msg-sem-acesso').textContent = 'Seu acesso está desativado. Procure o gestor da frota.';
-        return mostrar('tela-sem-acesso');
-      }
-      $('#saudacao').textContent = `Olá, ${u.nomeGuerra}`;
-      $('#info-usuario').textContent = `${u.curso} · ${u.turma} · nº ${u.numero} · perfil: ${u.perfil}`;
-      return mostrar('tela-inicio');
+  // Acompanha o meu cadastro em tempo real: quando o gestor aprovar, a tela muda sozinha.
+  pararMeuDoc = onSnapshot(doc(db, 'usuarios', user.uid), (snap) => {
+    if (!snap.exists()) {
+      eu = null;
+      preencher($('#form-completar'), lerRascunho());
+      return mostrar('tela-completar');
     }
-
-    const pre = await getDoc(doc(db, 'precadastro', normalizarEmail(user.email)));
-    if (!pre.exists() || pre.data().situacao !== 'pendente') {
-      $('#msg-sem-acesso').textContent =
-        'Este e-mail não consta do pré-cadastro, ou o acesso já foi ativado em outra conta. ' +
-        'Procure o gestor da frota e confira o e-mail informado.';
+    eu = { uid: user.uid, ...snap.data() };
+    if (eu.situacao === 'pendente') {
+      mostrarFicha();
+      return mostrar('tela-aguardando');
+    }
+    if (eu.situacao !== 'ativo') {
+      $('#msg-sem-acesso').textContent = eu.situacao === 'recusado'
+        ? 'Seu cadastro não foi aprovado. Procure o gestor da frota.'
+        : 'Seu acesso está desativado. Procure o gestor da frota.';
       return mostrar('tela-sem-acesso');
     }
-    preCadastroAtual = pre.data();
-    return mostrar('tela-ativar');
-  } catch (err) {
+    montarInicio();
+    if (!['tela-inicio', 'tela-gestao'].includes(telaAtual())) mostrar('tela-inicio');
+    if (telaAtual() === 'tela-gestao' && !ehGestao()) mostrar('tela-inicio');
+  }, (err) => {
     console.error(err);
-    mensagem(traduzirErro(err), true);
     $('#msg-sem-acesso').textContent = 'Não foi possível verificar seu acesso agora.';
-    return mostrar('tela-sem-acesso');
-  }
+    mostrar('tela-sem-acesso');
+  });
 }
 
 onAuthStateChanged(auth, rotear);
+
+function mostrarFicha() {
+  const dl = criar('dl', {},
+    criar('dt', { texto: 'Nome de guerra' }), criar('dd', { texto: eu.nomeGuerra }),
+    criar('dt', { texto: 'Número' }), criar('dd', { texto: eu.numero }),
+    criar('dt', { texto: 'Curso e turma' }), criar('dd', { texto: `${eu.curso} · ${eu.turma}` }),
+    criar('dt', { texto: 'E-mail' }), criar('dd', { texto: eu.email })
+  );
+  $('#ficha-aguardando').replaceChildren(dl);
+}
+
+function montarInicio() {
+  $('#saudacao').textContent = `Olá, ${eu.nomeGuerra}`;
+  $('#info-usuario').textContent =
+    `${eu.curso} · ${eu.turma} · nº ${eu.numero} · ${PERFIS[eu.perfil] || eu.perfil}`;
+  $('#cartao-gestao').hidden = !ehGestao();
+  if (ehGestao() && !pararColecao) iniciarGestao();
+  if (!ehGestao() && pararColecao) { pararColecao(); pararColecao = null; }
+}
 
 // ---------- login ----------
 $('#form-login').addEventListener('submit', async (e) => {
@@ -130,12 +215,16 @@ $('#form-login').addEventListener('submit', async (e) => {
 $('#form-primeiro-acesso').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.currentTarget;
+  const dados = lerDados(f);
+  const problema = validarDados(dados);
+  if (problema) return mensagem(problema, true);
   const email = normalizarEmail(f.email.value);
   if (!email) return mensagem('Informe o e-mail.', true);
   if (f.senha.value.length < 8) return mensagem('A senha precisa ter pelo menos 8 caracteres.', true);
   if (f.senha.value !== f.senha2.value) return mensagem('As senhas não conferem.', true);
   travar(f, true);
   try {
+    guardarRascunho(dados);
     const cred = await createUserWithEmailAndPassword(auth, email, f.senha.value);
     await sendEmailVerification(cred.user);
     f.reset();
@@ -187,41 +276,27 @@ $('#btn-reenviar').addEventListener('click', async () => {
   }
 });
 
-// ---------- ativação ----------
-$('#form-ativar').addEventListener('submit', async (e) => {
+// ---------- enviar cadastro para aprovação ----------
+$('#form-completar').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.currentTarget;
   const user = auth.currentUser;
-  const pre = preCadastroAtual;
-  if (!user || !pre) return rotear(user);
-
-  if (somenteDigitos(f.numero.value) !== somenteDigitos(pre.numero)) {
-    return mensagem('Número funcional não confere com o pré-cadastro.', true);
-  }
-
+  if (!user) return mostrar('tela-login');
+  const dados = lerDados(f);
+  const problema = validarDados(dados);
+  if (problema) return mensagem(problema, true);
   travar(f, true);
   try {
-    const email = normalizarEmail(user.email);
-    const lote = writeBatch(db);
-    lote.set(doc(db, 'usuarios', user.uid), {
-      numero: pre.numero,
-      nomeGuerra: pre.nomeGuerra,
-      curso: pre.curso,
-      turma: pre.turma,
-      perfil: pre.perfil,
-      email,
-      situacao: 'ativo',
-      ativadoEm: serverTimestamp()
+    await setDoc(doc(db, 'usuarios', user.uid), {
+      ...dados,
+      email: normalizarEmail(user.email),
+      perfil: 'usuario',
+      situacao: 'pendente',
+      criadoEm: serverTimestamp()
     });
-    lote.update(doc(db, 'precadastro', email), {
-      situacao: 'ativado',
-      uid: user.uid,
-      ativadoEm: serverTimestamp()
-    });
-    await lote.commit();
+    apagarRascunho();
     f.reset();
-    mensagem('Acesso ativado.');
-    await rotear(user);
+    mensagem('Cadastro enviado para aprovação.');
   } catch (err) {
     console.error(err);
     mensagem(traduzirErro(err), true);
@@ -229,6 +304,135 @@ $('#form-ativar').addEventListener('submit', async (e) => {
     travar(f, false);
   }
 });
+
+// ---------- gestão de usuários ----------
+$('#cartao-gestao').addEventListener('click', () => { renderizarLista(); mostrar('tela-gestao'); });
+
+document.querySelectorAll('.aba').forEach((aba) => aba.addEventListener('click', () => {
+  filtro = aba.dataset.filtro;
+  document.querySelectorAll('.aba').forEach((a) => a.classList.toggle('ativa', a === aba));
+  renderizarLista();
+}));
+$('#busca-usuarios').addEventListener('input', renderizarLista);
+
+function iniciarGestao() {
+  pararColecao = onSnapshot(collection(db, 'usuarios'), (snap) => {
+    usuarios = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+    atualizarContagens();
+    if (telaAtual() === 'tela-gestao') renderizarLista();
+  }, (err) => {
+    console.error(err);
+    mensagem(traduzirErro(err), true);
+  });
+}
+
+const categoria = (u) => (u.situacao === 'pendente' ? 'pendente' : u.situacao === 'ativo' ? 'ativo' : 'inativo');
+
+function atualizarContagens() {
+  const cont = { pendente: 0, ativo: 0, inativo: 0 };
+  usuarios.forEach((u) => { cont[categoria(u)]++; });
+  for (const k of Object.keys(cont)) $(`#cont-${k}`).textContent = cont[k] ? `(${cont[k]})` : '';
+  $('#resumo-gestao').textContent = cont.pendente
+    ? `${cont.pendente} cadastro${cont.pendente > 1 ? 's' : ''} aguardando aprovação`
+    : 'Aprovar cadastros e desativar contas';
+}
+
+// Gestor só mexe em usuário/conferente; admin mexe em todos. Ninguém mexe em si mesmo.
+function possoAlterar(u) {
+  if (!ehGestao() || u.uid === eu.uid) return false;
+  if (eu.perfil === 'admin') return true;
+  return ['usuario', 'conferente'].includes(u.perfil);
+}
+function perfisQuePossoDar() {
+  return eu.perfil === 'admin' ? Object.keys(PERFIS) : ['usuario', 'conferente'];
+}
+
+function seletorPerfil(atual) {
+  const sel = criar('select', { 'aria-label': 'Perfil' });
+  perfisQuePossoDar().forEach((p) => sel.append(criar('option', { value: p, texto: PERFIS[p] })));
+  sel.value = perfisQuePossoDar().includes(atual) ? atual : 'usuario';
+  return sel;
+}
+
+async function decidir(u, situacao, perfil, textoOk) {
+  try {
+    await updateDoc(doc(db, 'usuarios', u.uid), {
+      situacao,
+      perfil,
+      decididoPor: eu.uid,
+      decididoEm: serverTimestamp()
+    });
+    mensagem(textoOk);
+  } catch (err) {
+    console.error(err);
+    mensagem(traduzirErro(err), true);
+  }
+}
+
+function renderizarLista() {
+  const termo = $('#busca-usuarios').value.trim().toLowerCase();
+  const lista = usuarios
+    .filter((u) => categoria(u) === filtro)
+    .filter((u) => !termo || [u.nomeGuerra, u.numero, u.turma, u.curso, u.email]
+      .some((v) => String(v || '').toLowerCase().includes(termo)))
+    .sort((a, b) => String(a.nomeGuerra).localeCompare(String(b.nomeGuerra), 'pt-BR'));
+
+  const caixa = $('#lista-usuarios');
+  if (!lista.length) {
+    const vazio = { pendente: 'Nenhum cadastro aguardando aprovação.', ativo: 'Nenhum usuário ativo.', inativo: 'Nenhum usuário inativo.' };
+    return caixa.replaceChildren(criar('p', { class: 'vazio', texto: termo ? 'Nada encontrado.' : vazio[filtro] }));
+  }
+  caixa.replaceChildren(...lista.map(itemUsuario));
+}
+
+function itemUsuario(u) {
+  const ehEu = u.uid === eu.uid;
+  const etiqueta = ehEu ? 'Você' : (u.situacao === 'recusado' ? 'Recusado' : u.situacao === 'desativado' ? 'Desativado' : PERFIS[u.perfil] || u.perfil);
+  const item = criar('article', { class: 'item' },
+    criar('div', { class: 'item-topo' },
+      criar('span', { class: 'item-nome', texto: u.nomeGuerra || '(sem nome)' }),
+      criar('span', { class: 'item-num', texto: `nº ${u.numero || '—'}` })
+    ),
+    criar('div', { class: 'item-det', texto: `${u.curso || ''} · ${u.turma || ''}` }),
+    criar('div', { class: 'item-det', texto: u.email || '' }),
+    criar('span', { class: 'etiqueta', texto: etiqueta })
+  );
+
+  if (!possoAlterar(u)) {
+    if (!ehEu) item.append(criar('div', { class: 'item-det', texto: 'Somente o administrador pode alterar este cadastro.' }));
+    return item;
+  }
+
+  const acoes = criar('div', { class: 'item-acoes' });
+  if (u.situacao === 'pendente') {
+    const sel = seletorPerfil('usuario');
+    acoes.append(
+      sel,
+      criar('button', { type: 'button', class: 'btn-acao aprovar', texto: 'Aprovar',
+        onclick: () => decidir(u, 'ativo', sel.value, `${u.nomeGuerra} aprovado.`) }),
+      criar('button', { type: 'button', class: 'btn-acao perigo', texto: 'Recusar',
+        onclick: () => confirm(`Recusar o cadastro de ${u.nomeGuerra}?`) && decidir(u, 'recusado', u.perfil, 'Cadastro recusado.') })
+    );
+  } else if (u.situacao === 'ativo') {
+    const sel = seletorPerfil(u.perfil);
+    acoes.append(
+      sel,
+      criar('button', { type: 'button', class: 'btn-acao', texto: 'Salvar perfil',
+        onclick: () => sel.value !== u.perfil
+          ? decidir(u, 'ativo', sel.value, 'Perfil atualizado.')
+          : mensagem('O perfil já é esse.') }),
+      criar('button', { type: 'button', class: 'btn-acao perigo', texto: 'Desativar',
+        onclick: () => confirm(`Desativar o acesso de ${u.nomeGuerra}?`) && decidir(u, 'desativado', u.perfil, 'Acesso desativado.') })
+    );
+  } else {
+    acoes.append(
+      criar('button', { type: 'button', class: 'btn-acao aprovar', texto: 'Reativar',
+        onclick: () => decidir(u, 'ativo', perfisQuePossoDar().includes(u.perfil) ? u.perfil : 'usuario', 'Acesso reativado.') })
+    );
+  }
+  item.append(acoes);
+  return item;
+}
 
 // ---------- PWA ----------
 if ('serviceWorker' in navigator) {
