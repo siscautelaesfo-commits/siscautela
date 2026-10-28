@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Regras de segurança do SisCautela EsFO — versão 0.2 (autocadastro com aprovação)
+// Regras de segurança do SisCautela EsFO — versão 0.3 (autocadastro com aprovação e viaturas)
 // Princípio: tudo é bloqueado, exceto o que está liberado abaixo.
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -79,6 +79,33 @@ service cloud.firestore {
             || (resource.data.perfil in ['usuario', 'conferente']
                 && request.resource.data.perfil in ['usuario', 'conferente']));
 
+      allow delete: if false;
+    }
+
+    // ---------- viaturas ----------
+    // ID do documento = "vtr-" + prefixo em minúsculas.
+    function viaturaValida(d, id) {
+      return d.keys().hasOnly(['prefixo', 'modelo', 'placa', 'ano', 'combustivel', 'kmAtual', 'prioridade',
+                               'situacao', 'temRadio', 'usaArla', 'nova', 'atualizadoPor', 'atualizadoEm'])
+        && d.prefixo is string && d.prefixo.matches('^[A-Z0-9-]{1,10}$')
+        && id == 'vtr-' + d.prefixo.lower()
+        && d.modelo is string && d.modelo.size() >= 2 && d.modelo.size() <= 60
+        && d.placa is string && d.placa.size() <= 10
+        && (d.ano == null || (d.ano is int && d.ano >= 1980 && d.ano <= 2100))
+        && d.combustivel in ['flex', 'gasolina', 'diesel', 'eletrico']
+        && d.kmAtual is int && d.kmAtual >= 0 && d.kmAtual <= 9999999
+        && d.prioridade is int && d.prioridade >= 1 && d.prioridade <= 999
+        && d.situacao in ['ativa', 'manutencao', 'baixada', 'usoExclusivo']
+        && d.temRadio is bool && d.usaArla is bool && d.nova is bool
+        && d.atualizadoPor == request.auth.uid
+        && d.atualizadoEm == request.time;
+    }
+
+    match /viaturas/{id} {
+      allow read: if ativo();
+      allow create: if gestao() && viaturaValida(request.resource.data, id);
+      allow update: if gestao() && viaturaValida(request.resource.data, id)
+        && request.resource.data.prefixo == resource.data.prefixo;
       allow delete: if false;
     }
 

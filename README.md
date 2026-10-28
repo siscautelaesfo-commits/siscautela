@@ -3,8 +3,8 @@
 Sistema de cautela de viaturas da Escola de Formação de Oficiais (EsFO – APMG – PMPR).
 Substitui o livro de cautelas e o formulário por um aplicativo web (PWA) usado no celular.
 
-**Situação:** versão 0.2 — login, autocadastro com aprovação do gestor e gestão de usuários.
-Cautela, devolução, fotos e painel da frota ainda não foram implementados.
+**Situação:** versão 0.3 — login, autocadastro com aprovação do gestor, gestão de usuários e
+cadastro de viaturas. Cautela, devolução, fotos e alertas ainda não foram implementados.
 
 ## Arquitetura (custo zero)
 
@@ -27,6 +27,7 @@ public/                 app (o que vai para o GitHub Pages)
   css/estilo.css
   js/app.js             login, autocadastro, aprovação e gestão de usuários
   js/firebase-config.js configuração pública do projeto (não é segredo)
+  js/viaturas-iniciais.js  11 viaturas copiadas do app VTR-ESFO (importação única)
   sw.js, manifest.webmanifest, icons/   PWA
 firestore.rules         regras de segurança do banco
 tests/regras.test.js    testes das regras (emulador)
@@ -54,6 +55,17 @@ As regras do Firestore garantem que:
 
 O primeiro administrador foi criado manualmente pelo console do Firebase.
 
+## Viaturas
+
+Coleção `viaturas`, ID `vtr-{prefixo em minúsculas}`. Campos: prefixo, modelo, placa, ano,
+combustível, KM atual, prioridade (1 = usar primeiro), situação (`ativa`, `manutencao`, `baixada`,
+`usoExclusivo`), rádio, Arla 32 e se é nova.
+
+- Todos os usuários ativos veem a lista; só gestor/admin cadastra e edita.
+- Nenhuma viatura é apagada; para tirar de uso, mude a situação para `baixada`.
+- Com a lista vazia, a gestão vê o botão **Importar viaturas do VTR-ESFO**, que cadastra as 11
+  viaturas do app VTR-ESFO (placa e ano ficam para completar).
+
 ## Publicar
 
 **App:** https://siscautelaesfo-commits.github.io/siscautela/
@@ -79,6 +91,6 @@ npm run test:regras
 ## Próximas etapas
 
 - Assinatura por biometria (WebAuthn) no primeiro acesso e em cada cautela
-- Cadastro de viaturas e prioridade
+- Completar placa e ano das viaturas
 - Cautela e devolução com fotos (ponte Apps Script → Drive)
 - Painel da frota, alertas e relatórios
