@@ -171,8 +171,8 @@
         <button type="button" class="cartao" disabled>
           <strong>Minhas cautelas</strong><span>Em desenvolvimento</span>
         </button>
-        <button type="button" class="cartao" disabled>
-          <strong>Situação da frota</strong><span>Em desenvolvimento</span>
+        <button type="button" class="cartao" id="cartao-viaturas">
+          <strong>Viaturas</strong><span id="resumo-viaturas">Frota da EsFO e situação de cada viatura</span>
         </button>
       </div>
       <button type="button" class="secundario" data-acao="sair">Sair</button>
@@ -191,6 +191,69 @@
       </div>
       <input type="search" id="busca-usuarios" class="busca" placeholder="Buscar por nome, número ou turma">
       <div id="lista-usuarios" class="lista"></div>
+    </section>
+
+    <!-- Viaturas -->
+    <section id="tela-viaturas" class="tela">
+      <div class="cabecalho-tela">
+        <button type="button" class="voltar" data-ir="tela-inicio" aria-label="Voltar">←</button>
+        <h1>Viaturas</h1>
+      </div>
+      <p class="perfil" id="resumo-frota"></p>
+      <button type="button" class="primario" id="btn-nova-viatura" hidden>Nova viatura</button>
+      <div id="caixa-importar" class="ficha" hidden>
+        <p>Nenhuma viatura cadastrada ainda. Importe as 11 viaturas do app VTR-ESFO para começar; depois é só completar placa e ano.</p>
+        <button type="button" class="primario" id="btn-importar">Importar viaturas do VTR-ESFO</button>
+      </div>
+      <div id="lista-viaturas" class="lista"></div>
+    </section>
+
+    <!-- Cadastro / edição de viatura (gestão) -->
+    <section id="tela-viatura-form" class="tela">
+      <div class="cabecalho-tela">
+        <button type="button" class="voltar" data-ir="tela-viaturas" aria-label="Voltar">←</button>
+        <h1 id="titulo-viatura-form">Nova viatura</h1>
+      </div>
+      <form id="form-viatura" novalidate>
+        <label>Prefixo
+          <input type="text" name="prefixo" autocomplete="off" maxlength="10" required>
+        </label>
+        <label>Modelo
+          <input type="text" name="modelo" placeholder="Ex.: Renault/Duster" autocomplete="off" maxlength="60" required>
+        </label>
+        <label>Placa
+          <input type="text" name="placa" placeholder="Opcional" autocomplete="off" maxlength="10">
+        </label>
+        <label>Ano de fabricação
+          <input type="text" name="ano" inputmode="numeric" placeholder="Opcional" autocomplete="off" maxlength="4">
+        </label>
+        <label>Combustível
+          <select name="combustivel" required>
+            <option value="flex">Flex</option>
+            <option value="gasolina">Gasolina</option>
+            <option value="diesel">Diesel</option>
+            <option value="eletrico">Elétrico</option>
+          </select>
+        </label>
+        <label>KM atual
+          <input type="text" name="kmAtual" inputmode="numeric" autocomplete="off" maxlength="7" required>
+        </label>
+        <label>Prioridade de uso (1 = usar primeiro)
+          <input type="text" name="prioridade" inputmode="numeric" autocomplete="off" maxlength="3" required>
+        </label>
+        <label>Situação
+          <select name="situacao" required>
+            <option value="ativa">Disponível para cautela</option>
+            <option value="manutencao">Em manutenção</option>
+            <option value="baixada">Baixada</option>
+            <option value="usoExclusivo">Uso exclusivo do comando</option>
+          </select>
+        </label>
+        <label class="opcao"><input type="checkbox" name="temRadio"> Tem rádio</label>
+        <label class="opcao"><input type="checkbox" name="usaArla"> Usa Arla 32</label>
+        <label class="opcao"><input type="checkbox" name="nova"> Viatura nova</label>
+        <button type="submit" class="primario">Salvar</button>
+      </form>
     </section>
   </main>
 

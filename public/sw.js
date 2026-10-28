@@ -1,12 +1,13 @@
 // Service worker simples: guarda a "casca" do app para abrir rápido.
 // Os dados (login e banco) sempre vêm da internet.
-const VERSAO = 'siscautela-v2';
+const VERSAO = 'siscautela-v3';
 const CASCA = [
   './',
   'index.html',
   'css/estilo.css',
   'js/app.js',
   'js/firebase-config.js',
+  'js/viaturas-iniciais.js',
   'icons/icon.svg',
   'manifest.webmanifest'
 ];
