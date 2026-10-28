@@ -140,3 +140,34 @@ test('ninguém apaga usuários nem acessa coleções não previstas', async () =
   await assertFails(deleteDoc(doc(admin(), 'usuarios', 'uid-user')));
   await assertFails(setDoc(doc(admin(), 'qualquer', 'x'), { a: 1 }));
 });
+
+// ---- viaturas ----
+const viatura = (quem, extra = {}) => ({
+  prefixo: '17692', modelo: 'Renault/Master', placa: '', ano: null, combustivel: 'diesel',
+  kmAtual: 2749, prioridade: 1, situacao: 'ativa', temRadio: true, usaArla: false, nova: true,
+  atualizadoPor: quem, atualizadoEm: serverTimestamp(), ...extra
+});
+
+test('gestor cadastra viatura; usuário comum só lê', async () => {
+  await assertSucceeds(setDoc(doc(gestor(), 'viaturas', 'vtr-17692'), viatura('uid-gestor')));
+  await assertSucceeds(getDocs(collection(user(), 'viaturas')));
+  await assertFails(setDoc(doc(user(), 'viaturas', 'vtr-99999'), viatura('uid-user', { prefixo: '99999' })));
+});
+
+test('pendente não lê viaturas', async () => {
+  await criarPendente();
+  await assertFails(getDocs(collection(novato(), 'viaturas')));
+});
+
+test('viatura inválida é recusada', async () => {
+  await assertFails(setDoc(doc(gestor(), 'viaturas', 'vtr-outro'), viatura('uid-gestor')));
+  await assertFails(setDoc(doc(gestor(), 'viaturas', 'vtr-17692'), viatura('uid-gestor', { situacao: 'xyz' })));
+  await assertFails(setDoc(doc(gestor(), 'viaturas', 'vtr-17692'), viatura('uid-gestor', { kmAtual: -1 })));
+  await assertFails(setDoc(doc(gestor(), 'viaturas', 'vtr-17692'), viatura('uid-admin')));
+});
+
+test('prefixo não muda e viatura não é apagada', async () => {
+  await setDoc(doc(gestor(), 'viaturas', 'vtr-17692'), viatura('uid-gestor'));
+  await assertSucceeds(setDoc(doc(gestor(), 'viaturas', 'vtr-17692'), viatura('uid-gestor', { placa: 'ABC1D23' })));
+  await assertFails(deleteDoc(doc(admin(), 'viaturas', 'vtr-17692')));
+});
