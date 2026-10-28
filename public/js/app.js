@@ -1,13 +1,14 @@
-// SisCautela EsFO — versão 0.2: autocadastro com aprovação do gestor.
+// SisCautela EsFO — versão 0.3: autocadastro com aprovação e cadastro de viaturas.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendEmailVerification, sendPasswordResetEmail, signOut
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
 import {
-  getFirestore, doc, setDoc, updateDoc, collection, onSnapshot, serverTimestamp
+  getFirestore, doc, setDoc, updateDoc, collection, onSnapshot, serverTimestamp, writeBatch
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
+import { VIATURAS_INICIAIS } from './viaturas-iniciais.js';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -21,6 +22,13 @@ const PERFIS = {
   admin: 'Administrador'
 };
 const CHAVE_RASCUNHO = 'siscautela-cadastro';
+const SITUACOES = {
+  ativa: 'Disponível',
+  manutencao: 'Em manutenção',
+  baixada: 'Baixada',
+  usoExclusivo: 'Uso exclusivo'
+};
+const COMBUSTIVEIS = { flex: 'Flex', gasolina: 'Gasolina', diesel: 'Diesel', eletrico: 'Elétrico' };
 
 // ---------- utilidades de tela ----------
 const $ = (sel) => document.querySelector(sel);
@@ -118,13 +126,17 @@ let pararMeuDoc = null;     // listener do meu documento
 let pararColecao = null;    // listener da lista de usuários (gestão)
 let usuarios = [];          // lista para a gestão
 let filtro = 'pendente';
+let pararViaturas = null;   // listener das viaturas
+let viaturas = [];
+let viaturaEditando = null;
 
 const ehGestao = () => eu && eu.situacao === 'ativo' && ['gestor', 'admin'].includes(eu.perfil);
 
 function pararTudo() {
   pararMeuDoc?.(); pararMeuDoc = null;
   pararColecao?.(); pararColecao = null;
-  eu = null; usuarios = [];
+  pararViaturas?.(); pararViaturas = null;
+  eu = null; usuarios = []; viaturas = [];
 }
 
 // ---------- navegação por botões ----------
@@ -163,8 +175,9 @@ function rotear(user) {
       return mostrar('tela-sem-acesso');
     }
     montarInicio();
-    if (!['tela-inicio', 'tela-gestao'].includes(telaAtual())) mostrar('tela-inicio');
-    if (telaAtual() === 'tela-gestao' && !ehGestao()) mostrar('tela-inicio');
+    const telasLogado = ['tela-inicio', 'tela-gestao', 'tela-viaturas', 'tela-viatura-form'];
+    if (!telasLogado.includes(telaAtual())) mostrar('tela-inicio');
+    if (['tela-gestao', 'tela-viatura-form'].includes(telaAtual()) && !ehGestao()) mostrar('tela-inicio');
   }, (err) => {
     console.error(err);
     $('#msg-sem-acesso').textContent = 'Não foi possível verificar seu acesso agora.';
@@ -191,6 +204,7 @@ function montarInicio() {
   $('#cartao-gestao').hidden = !ehGestao();
   if (ehGestao() && !pararColecao) iniciarGestao();
   if (!ehGestao() && pararColecao) { pararColecao(); pararColecao = null; }
+  if (!pararViaturas) iniciarViaturas();
 }
 
 // ---------- login ----------
@@ -433,6 +447,174 @@ function itemUsuario(u) {
   item.append(acoes);
   return item;
 }
+
+// ---------- viaturas ----------
+const idViatura = (prefixo) => 'vtr-' + String(prefixo).toLowerCase();
+
+function iniciarViaturas() {
+  pararViaturas = onSnapshot(collection(db, 'viaturas'), (snap) => {
+    viaturas = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    atualizarResumoViaturas();
+    if (telaAtual() === 'tela-viaturas') renderizarViaturas();
+  }, (err) => {
+    console.error(err);
+    mensagem(traduzirErro(err), true);
+  });
+}
+
+function atualizarResumoViaturas() {
+  const disp = viaturas.filter((v) => v.situacao === 'ativa').length;
+  const texto = viaturas.length
+    ? `${disp} disponíve${disp === 1 ? 'l' : 'is'} de ${viaturas.length} viatura${viaturas.length === 1 ? '' : 's'}`
+    : 'Nenhuma viatura cadastrada';
+  $('#resumo-viaturas').textContent = texto;
+  $('#resumo-frota').textContent = texto;
+}
+
+$('#cartao-viaturas').addEventListener('click', () => { renderizarViaturas(); mostrar('tela-viaturas'); });
+
+function renderizarViaturas() {
+  $('#btn-nova-viatura').hidden = !ehGestao();
+  $('#caixa-importar').hidden = !(ehGestao() && viaturas.length === 0);
+  const lista = [...viaturas].sort((a, b) =>
+    (a.prioridade - b.prioridade) || String(a.prefixo).localeCompare(String(b.prefixo), 'pt-BR'));
+  const caixa = $('#lista-viaturas');
+  if (!lista.length) {
+    return caixa.replaceChildren(criar('p', { class: 'vazio', texto: 'Nenhuma viatura cadastrada.' }));
+  }
+  caixa.replaceChildren(...lista.map(itemViatura));
+}
+
+function itemViatura(v) {
+  const extras = [
+    COMBUSTIVEIS[v.combustivel] || v.combustivel,
+    v.temRadio ? 'com rádio' : 'sem rádio',
+    v.usaArla ? 'Arla 32' : null,
+    v.nova ? 'nova' : null
+  ].filter(Boolean).join(' · ');
+  const placaAno = [v.placa ? `Placa ${v.placa}` : 'Placa não cadastrada', v.ano ? `ano ${v.ano}` : null]
+    .filter(Boolean).join(' · ');
+  const item = criar('article', { class: 'item' },
+    criar('div', { class: 'item-topo' },
+      criar('span', { class: 'vtr-prefixo', texto: v.prefixo }),
+      criar('span', { class: 'item-num', texto: `${Number(v.kmAtual || 0).toLocaleString('pt-BR')} km` })
+    ),
+    criar('div', { class: 'item-nome', texto: v.modelo }),
+    criar('div', { class: 'item-det', texto: extras }),
+    criar('div', { class: 'item-det', texto: placaAno }),
+    criar('div', { class: 'item-tags' },
+      criar('span', { class: `situacao ${v.situacao}`, texto: SITUACOES[v.situacao] || v.situacao }),
+      criar('span', { class: 'etiqueta', texto: `Prioridade ${v.prioridade}` })
+    )
+  );
+  if (ehGestao()) {
+    item.append(criar('div', { class: 'item-acoes' },
+      criar('button', { type: 'button', class: 'btn-acao', texto: 'Editar', onclick: () => abrirFormViatura(v) })
+    ));
+  }
+  return item;
+}
+
+$('#btn-nova-viatura').addEventListener('click', () => abrirFormViatura(null));
+
+function abrirFormViatura(v) {
+  viaturaEditando = v;
+  const f = $('#form-viatura');
+  f.reset();
+  $('#titulo-viatura-form').textContent = v ? `Viatura ${v.prefixo}` : 'Nova viatura';
+  f.prefixo.disabled = !!v;
+  if (v) {
+    f.prefixo.value = v.prefixo;
+    f.modelo.value = v.modelo || '';
+    f.placa.value = v.placa || '';
+    f.ano.value = v.ano || '';
+    f.combustivel.value = v.combustivel || 'flex';
+    f.kmAtual.value = v.kmAtual ?? '';
+    f.prioridade.value = v.prioridade ?? '';
+    f.situacao.value = v.situacao || 'ativa';
+    f.temRadio.checked = !!v.temRadio;
+    f.usaArla.checked = !!v.usaArla;
+    f.nova.checked = !!v.nova;
+  } else {
+    f.temRadio.checked = true;
+  }
+  mostrar('tela-viatura-form');
+}
+
+function lerViatura(f) {
+  const ano = String(f.ano.value || '').replace(/\D/g, '');
+  return {
+    prefixo: String(f.prefixo.value || '').trim().toUpperCase(),
+    modelo: String(f.modelo.value || '').trim().replace(/\s+/g, ' '),
+    placa: String(f.placa.value || '').trim().toUpperCase().replace(/\s+/g, ''),
+    ano: ano ? Number(ano) : null,
+    combustivel: f.combustivel.value,
+    kmAtual: Number(String(f.kmAtual.value || '').replace(/\D/g, '')),
+    prioridade: Number(String(f.prioridade.value || '').replace(/\D/g, '')),
+    situacao: f.situacao.value,
+    temRadio: f.temRadio.checked,
+    usaArla: f.usaArla.checked,
+    nova: f.nova.checked
+  };
+}
+
+function validarViatura(v) {
+  if (!/^[A-Z0-9-]{1,10}$/.test(v.prefixo)) return 'Informe o prefixo (letras, números ou hífen).';
+  if (v.modelo.length < 2) return 'Informe o modelo.';
+  if (v.placa && !/^[A-Z0-9-]{5,10}$/.test(v.placa)) return 'Placa inválida.';
+  if (v.ano !== null && (v.ano < 1980 || v.ano > 2100)) return 'Ano inválido.';
+  if (!Number.isInteger(v.kmAtual) || v.kmAtual < 0 || v.kmAtual > 9999999) return 'KM inválido.';
+  if (!Number.isInteger(v.prioridade) || v.prioridade > 999) return 'Prioridade inválida.';
+  if (!SITUACOES[v.situacao]) return 'Selecione a situação.';
+  if (!COMBUSTIVEIS[v.combustivel]) return 'Selecione o combustível.';
+  return null;
+}
+
+$('#form-viatura').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = e.currentTarget;
+  if (!ehGestao()) return mensagem('Somente gestor ou admin altera viaturas.', true);
+  const v = lerViatura(f);
+  const problema = validarViatura(v);
+  if (problema) return mensagem(problema, true);
+  if (!String(f.kmAtual.value).trim()) return mensagem('Informe o KM atual.', true);
+  if (!v.prioridade) return mensagem('Informe a prioridade (1 ou mais).', true);
+  const id = viaturaEditando ? viaturaEditando.id : idViatura(v.prefixo);
+  if (!viaturaEditando && viaturas.some((x) => x.id === id)) return mensagem('Já existe viatura com esse prefixo.', true);
+  travar(f, true);
+  try {
+    await setDoc(doc(db, 'viaturas', id), { ...v, atualizadoPor: eu.uid, atualizadoEm: serverTimestamp() });
+    mensagem(viaturaEditando ? 'Viatura atualizada.' : 'Viatura cadastrada.');
+    renderizarViaturas();
+    mostrar('tela-viaturas');
+  } catch (err) {
+    console.error(err);
+    mensagem(traduzirErro(err), true);
+  } finally {
+    travar(f, false);
+    if (viaturaEditando) f.prefixo.disabled = true;
+  }
+});
+
+$('#btn-importar').addEventListener('click', async (e) => {
+  if (!ehGestao() || viaturas.length) return;
+  if (!confirm(`Importar ${VIATURAS_INICIAIS.length} viaturas do VTR-ESFO?`)) return;
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    const lote = writeBatch(db);
+    VIATURAS_INICIAIS.forEach((v) => lote.set(doc(db, 'viaturas', idViatura(v.prefixo)), {
+      ...v, placa: '', ano: null, atualizadoPor: eu.uid, atualizadoEm: serverTimestamp()
+    }));
+    await lote.commit();
+    mensagem('Viaturas importadas.');
+  } catch (err) {
+    console.error(err);
+    mensagem(traduzirErro(err), true);
+  } finally {
+    btn.disabled = false;
+  }
+});
 
 // ---------- PWA ----------
 if ('serviceWorker' in navigator) {
