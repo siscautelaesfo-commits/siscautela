@@ -187,3 +187,15 @@ button:disabled { opacity: .55; cursor: default; }
 .btn-acao.aprovar { background: var(--ok); border-color: var(--ok); color: #fff; }
 .btn-acao.perigo { color: var(--erro); border-color: var(--erro); }
 @media (prefers-color-scheme: dark) { .btn-acao.perigo { color: #f08a80; border-color: #f08a80; } }
+
+/* ---------- versão 0.3: viaturas ---------- */
+label.opcao { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+label.opcao input { width: 22px; height: 22px; min-height: 0; padding: 0; }
+#btn-nova-viatura { margin: 4px 0 16px; }
+.vtr-prefixo { font-weight: 800; font-size: 1.15rem; letter-spacing: .02em; }
+.situacao { display: inline-block; font-size: .75rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-top: 6px; color: #fff; }
+.situacao.ativa { background: var(--ok); }
+.situacao.manutencao { background: #a86a00; }
+.situacao.baixada { background: var(--erro); }
+.situacao.usoExclusivo { background: #4a5a8a; }
+.item-tags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
