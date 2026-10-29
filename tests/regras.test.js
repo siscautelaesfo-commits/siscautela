@@ -171,3 +171,111 @@ test('prefixo não muda e viatura não é apagada', async () => {
   await assertSucceeds(setDoc(doc(gestor(), 'viaturas', 'vtr-17692'), viatura('uid-gestor', { placa: 'ABC1D23' })));
   await assertFails(deleteDoc(doc(admin(), 'viaturas', 'vtr-17692')));
 });
+
+// ---- cautela e devolução (versão 0.4) ----
+import { writeBatch, Timestamp } from 'firebase/firestore';
+
+const emHoras = (h) => Timestamp.fromMillis(Date.now() + h * 3600e3);
+
+async function prepararViatura(extra = {}) {
+  await env.withSecurityRulesDisabled(async (c) => {
+    await setDoc(doc(c.firestore(), 'viaturas', 'vtr-17692'), {
+      prefixo: '17692', modelo: 'Renault/Master', placa: '', ano: null, combustivel: 'diesel', kmAtual: 2749,
+      prioridade: 1, situacao: 'ativa', temRadio: true, usaArla: false, nova: true, atualizadoPor: 'uid-gestor', ...extra
+    });
+  });
+}
+
+// Mesma gravação que o app faz: contador + cautela + viatura + usuário, juntos
+function cautelar(db, uid, seq = 1, extra = {}, extraVtr = {}) {
+  const lote = writeBatch(db);
+  const id = 'c' + seq;
+  lote.set(doc(db, 'contadores', 'cautelas'), { ultimo: seq });
+  lote.set(doc(db, 'cautelas', id), {
+    seq, numero: 'C-' + String(seq).padStart(4, '0'), vtrId: 'vtr-17692', vtrPrefixo: '17692', userId: uid, userNome: 'Cad. User',
+    missao: 'Condução ao HPM', justificativa: null, saida: serverTimestamp(), previsao: emHoras(2), kmSaida: 2749, combSaida: 3,
+    divergenciaKm: null, assinaturaSaida: { metodo: 'biometria', em: serverTimestamp() }, situacao: 'aberta', ...extra
+  });
+  lote.update(doc(db, 'viaturas', 'vtr-17692'), { cautelaAtual: id, kmAtual: extra.kmSaida ?? 2749, combNivel: extra.combSaida ?? 3, atualizadoEm: serverTimestamp(), ...extraVtr });
+  lote.update(doc(db, 'usuarios', uid), { cautelaAtual: id });
+  return lote.commit();
+}
+
+function devolver(db, uid, quem, seq = 1, km = 2790) {
+  const lote = writeBatch(db);
+  const id = 'c' + seq;
+  lote.update(doc(db, 'cautelas', id), {
+    situacao: 'encerrada', devolucao: serverTimestamp(), kmRetorno: km, combRetorno: 2,
+    assinaturaRetorno: { metodo: 'senha', em: serverTimestamp() }, obs: null, justComb: null, encerradaPor: quem
+  });
+  lote.update(doc(db, 'viaturas', 'vtr-17692'), { cautelaAtual: null, ultimaCautela: id, kmAtual: km, combNivel: 2, atualizadoEm: serverTimestamp() });
+  lote.update(doc(db, 'usuarios', uid), { cautelaAtual: null });
+  return lote.commit();
+}
+
+test('usuário cautela viatura disponível e devolve', async () => {
+  await prepararViatura();
+  await assertSucceeds(cautelar(user(), 'uid-user'));
+  await assertSucceeds(devolver(user(), 'uid-user', 'uid-user'));
+});
+
+test('não cautela viatura já cautelada nem duas ao mesmo tempo', async () => {
+  await prepararViatura();
+  await cautelar(user(), 'uid-user');
+  await assertFails(cautelar(gestor(), 'uid-gestor', 2));
+});
+
+test('não cautela viatura em manutenção', async () => {
+  await prepararViatura({ situacao: 'manutencao' });
+  await assertFails(cautelar(user(), 'uid-user'));
+});
+
+test('não cautela em nome de outro nem pula o número', async () => {
+  await prepararViatura();
+  await assertFails(cautelar(user(), 'uid-gestor'));
+  await assertFails(cautelar(user(), 'uid-user', 5));
+});
+
+test('previsão de retorno precisa ser futura e em até 24 h', async () => {
+  await prepararViatura();
+  await assertFails(cautelar(user(), 'uid-user', 1, { previsao: emHoras(-1) }));
+  await assertFails(cautelar(user(), 'uid-user', 1, { previsao: emHoras(30) }));
+});
+
+test('campos da ponte do Drive não podem vir do app', async () => {
+  await prepararViatura();
+  await assertFails(cautelar(user(), 'uid-user', 1, { arquivos: { retirada: {} } }));
+});
+
+test('KM de devolução não pode ser menor que o de saída', async () => {
+  await prepararViatura();
+  await cautelar(user(), 'uid-user');
+  await assertFails(devolver(user(), 'uid-user', 'uid-user', 1, 2700));
+});
+
+test('outro usuário não devolve; a gestão pode encerrar', async () => {
+  await prepararViatura();
+  await cautelar(user(), 'uid-user');
+  await env.withSecurityRulesDisabled(async (c) => {
+    await setDoc(doc(c.firestore(), 'usuarios', 'uid-outro'), { numero: '9', nomeGuerra: 'Outro', curso: 'CFO', turma: '-', email: 'o@x.com', perfil: 'usuario', situacao: 'ativo' });
+  });
+  await assertFails(devolver(ctx('uid-outro', 'o@x.com'), 'uid-user', 'uid-outro'));
+  await assertSucceeds(devolver(gestor(), 'uid-user', 'uid-gestor'));
+});
+
+test('usuário lê só as próprias cautelas; gestão lê todas', async () => {
+  await prepararViatura();
+  await cautelar(user(), 'uid-user');
+  await assertSucceeds(getDoc(doc(user(), 'cautelas', 'c1')));
+  await assertSucceeds(getDocs(collection(gestor(), 'cautelas')));
+  await env.withSecurityRulesDisabled(async (c) => {
+    await setDoc(doc(c.firestore(), 'usuarios', 'uid-outro'), { numero: '9', nomeGuerra: 'Outro', curso: 'CFO', turma: '-', email: 'o@x.com', perfil: 'usuario', situacao: 'ativo' });
+  });
+  await assertFails(getDoc(doc(ctx('uid-outro', 'o@x.com'), 'cautelas', 'c1')));
+});
+
+test('ninguém apaga cautela', async () => {
+  await prepararViatura();
+  await cautelar(user(), 'uid-user');
+  await assertFails(deleteDoc(doc(admin(), 'cautelas', 'c1')));
+});
