@@ -3,19 +3,22 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#1f3a2e">
+  <meta name="theme-color" content="#071c40">
   <title>SisCautela EsFO</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
-  <link rel="apple-touch-icon" href="icons/icon.svg">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600;700&family=Barlow+Condensed:wght@600;700&display=swap">
   <link rel="stylesheet" href="css/estilo.css">
 </head>
 <body>
   <header class="topo">
-    <img src="icons/icon.svg" alt="" class="topo-icone">
+    <div class="brasoes"><img src="img/brasao-apmg.png" alt="Brasão da APMG"><img src="img/brasao-esfo.png" alt="Brasão da EsFO"></div>
     <div>
       <strong>SisCautela</strong>
-      <span>EsFO · APMG</span>
+      <span>Cautela de viaturas · EsFO</span>
     </div>
   </header>
 
@@ -26,7 +29,7 @@
     </section>
 
     <!-- Login -->
-    <section id="tela-login" class="tela">
+    <section id="tela-login" class="tela estreita">
       <h1>Entrar</h1>
       <form id="form-login" novalidate>
         <label>E-mail
@@ -49,7 +52,7 @@
     </section>
 
     <!-- Primeiro acesso: cria login e guarda os dados do cadastro -->
-    <section id="tela-primeiro-acesso" class="tela">
+    <section id="tela-primeiro-acesso" class="tela estreita">
       <h1>Primeiro acesso</h1>
       <p>Preencha seus dados. Depois de confirmar o e-mail, o cadastro vai para aprovação do gestor.</p>
       <form id="form-primeiro-acesso" novalidate>
@@ -86,7 +89,7 @@
     </section>
 
     <!-- Esqueci a senha -->
-    <section id="tela-esqueci" class="tela">
+    <section id="tela-esqueci" class="tela estreita">
       <h1>Redefinir senha</h1>
       <p>Informe seu e-mail. Se houver acesso cadastrado, você receberá um link para criar nova senha.</p>
       <form id="form-esqueci" novalidate>
@@ -101,7 +104,7 @@
     </section>
 
     <!-- Verificar e-mail -->
-    <section id="tela-verificar" class="tela">
+    <section id="tela-verificar" class="tela estreita">
       <h1>Confirme seu e-mail</h1>
       <p>Enviamos um link de confirmação para <strong id="email-verificar"></strong>.
          Abra o e-mail (confira também o spam), clique no link e depois volte aqui.</p>
@@ -113,7 +116,7 @@
     </section>
 
     <!-- Completar / enviar cadastro (após confirmar o e-mail) -->
-    <section id="tela-completar" class="tela">
+    <section id="tela-completar" class="tela estreita">
       <h1>Enviar cadastro</h1>
       <p>E-mail confirmado. Confira seus dados e envie para aprovação do gestor.</p>
       <form id="form-completar" novalidate>
@@ -141,7 +144,7 @@
     </section>
 
     <!-- Aguardando aprovação -->
-    <section id="tela-aguardando" class="tela">
+    <section id="tela-aguardando" class="tela estreita">
       <h1>Aguardando aprovação</h1>
       <p>Seu cadastro foi enviado. Assim que o gestor aprovar, esta tela muda sozinha e o acesso é liberado.</p>
       <div class="ficha" id="ficha-aguardando"></div>
@@ -151,7 +154,7 @@
     </section>
 
     <!-- Sem acesso (recusado ou desativado) -->
-    <section id="tela-sem-acesso" class="tela">
+    <section id="tela-sem-acesso" class="tela estreita">
       <h1>Acesso não liberado</h1>
       <p id="msg-sem-acesso"></p>
       <button type="button" class="secundario" data-acao="sair">Sair</button>
@@ -159,23 +162,57 @@
 
     <!-- Início -->
     <section id="tela-inicio" class="tela">
-      <h1 id="saudacao">Olá</h1>
-      <p class="perfil" id="info-usuario"></p>
+      <div class="linha separa">
+        <div>
+          <h1 id="saudacao">Olá</h1>
+          <p class="perfil" id="info-usuario"></p>
+        </div>
+        <div id="fila-fotos" class="fila-fotos" hidden></div>
+      </div>
+      <div id="inicio-cautela" class="pilha"></div>
       <div class="cartoes">
+        <button type="button" class="cartao" id="cartao-minhas">
+          <strong>Minhas cautelas</strong><span>Histórico, fotos e termo em PDF</span>
+        </button>
+        <button type="button" class="cartao" id="cartao-painel" hidden>
+          <strong>Painel da frota</strong><span id="resumo-painel">Situação das viaturas, cautelas e relatórios</span>
+        </button>
         <button type="button" class="cartao" id="cartao-gestao" hidden>
           <strong>Gestão de usuários</strong><span id="resumo-gestao">Aprovar cadastros e desativar contas</span>
-        </button>
-        <button type="button" class="cartao" disabled>
-          <strong>Nova cautela</strong><span>Em desenvolvimento</span>
-        </button>
-        <button type="button" class="cartao" disabled>
-          <strong>Minhas cautelas</strong><span>Em desenvolvimento</span>
         </button>
         <button type="button" class="cartao" id="cartao-viaturas">
           <strong>Viaturas</strong><span id="resumo-viaturas">Frota da EsFO e situação de cada viatura</span>
         </button>
       </div>
       <button type="button" class="secundario" data-acao="sair">Sair</button>
+    </section>
+
+    <!-- Cautela (retirada) -->
+    <section id="tela-retirada" class="tela estreita"><div id="retirada-conteudo" class="pilha"></div></section>
+
+    <!-- Devolução -->
+    <section id="tela-devolucao" class="tela estreita"><div id="devolucao-conteudo" class="pilha"></div></section>
+
+    <!-- Cautela ou devolução registrada -->
+    <section id="tela-concluida" class="tela estreita"><div id="concluida-conteudo"></div></section>
+
+    <!-- Minhas cautelas -->
+    <section id="tela-minhas" class="tela estreita">
+      <div class="cabecalho-tela">
+        <button type="button" class="voltar" data-ir="tela-inicio" aria-label="Voltar">←</button>
+        <h1>Minhas cautelas</h1>
+      </div>
+      <div id="minhas-lista" class="vlista"></div>
+    </section>
+
+    <!-- Painel da frota (conferente, gestor e administrador) -->
+    <section id="tela-painel" class="tela">
+      <div class="cabecalho-tela">
+        <button type="button" class="voltar" data-ir="tela-inicio" aria-label="Voltar">←</button>
+        <h1>Painel da frota</h1>
+      </div>
+      <div class="guias" role="tablist" id="guias-painel"></div>
+      <div id="painel-conteudo"></div>
     </section>
 
     <!-- Gestão de usuários (gestor/admin) -->
@@ -209,7 +246,7 @@
     </section>
 
     <!-- Cadastro / edição de viatura (gestão) -->
-    <section id="tela-viatura-form" class="tela">
+    <section id="tela-viatura-form" class="tela estreita">
       <div class="cabecalho-tela">
         <button type="button" class="voltar" data-ir="tela-viaturas" aria-label="Voltar">←</button>
         <h1 id="titulo-viatura-form">Nova viatura</h1>
@@ -249,6 +286,10 @@
             <option value="usoExclusivo">Uso exclusivo do comando</option>
           </select>
         </label>
+        <label>Motivo da situação
+          <input type="text" name="motivoSituacao" placeholder="Ex.: troca de pastilhas na oficina" autocomplete="off" maxlength="200">
+          <span class="dica">Aparece na lista e nos relatórios quando a viatura não está disponível.</span>
+        </label>
         <label class="opcao"><input type="checkbox" name="temRadio"> Tem rádio</label>
         <label class="opcao"><input type="checkbox" name="usaArla"> Usa Arla 32</label>
         <label class="opcao"><input type="checkbox" name="nova"> Viatura nova</label>
@@ -257,6 +298,7 @@
     </section>
   </main>
 
+  <div id="modal"></div>
   <div id="mensagem" class="mensagem" role="status" aria-live="assertive" hidden></div>
 
   <script type="module" src="js/app.js"></script>
