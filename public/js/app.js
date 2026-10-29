@@ -1,19 +1,18 @@
-// SisCautela EsFO — versão 0.3: autocadastro com aprovação e cadastro de viaturas.
-import { initializeApp } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-app.js';
+// SisCautela EsFO — versão 0.4: acesso, usuários e viaturas (este arquivo),
+// cautela e devolução (cautela.js), painel e relatórios (painel.js, relatorios.js).
 import {
-  getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+  onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword,
   sendEmailVerification, sendPasswordResetEmail, signOut
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
 import {
-  getFirestore, doc, setDoc, updateDoc, collection, onSnapshot, serverTimestamp, writeBatch
+  doc, setDoc, updateDoc, collection, onSnapshot, serverTimestamp, writeBatch
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
-import { firebaseConfig } from './firebase-config.js';
 import { VIATURAS_INICIAIS } from './viaturas-iniciais.js';
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-auth.languageCode = 'pt-BR';
-const db = getFirestore(app);
+import {
+  auth, db, estado, avisar, $, mostrar, telaAtual, mensagem, traduzirErro, ehGestao, acompanha, SITUACOES, posto
+} from './nucleo.js';
+import { iniciarCautelas, pararCautelas, telasCautela } from './cautela.js';
+import { iniciarPainel, pararPainel, telasPainel } from './painel.js';
 
 const PERFIS = {
   usuario: 'Usuário',
@@ -22,33 +21,9 @@ const PERFIS = {
   admin: 'Administrador'
 };
 const CHAVE_RASCUNHO = 'siscautela-cadastro';
-const SITUACOES = {
-  ativa: 'Disponível',
-  manutencao: 'Em manutenção',
-  baixada: 'Baixada',
-  usoExclusivo: 'Uso exclusivo'
-};
 const COMBUSTIVEIS = { flex: 'Flex', gasolina: 'Gasolina', diesel: 'Diesel', eletrico: 'Elétrico' };
 
 // ---------- utilidades de tela ----------
-const $ = (sel) => document.querySelector(sel);
-
-function mostrar(idTela) {
-  document.querySelectorAll('.tela').forEach((t) => t.classList.toggle('ativa', t.id === idTela));
-  window.scrollTo(0, 0);
-}
-const telaAtual = () => document.querySelector('.tela.ativa')?.id;
-
-let timerMsg;
-function mensagem(texto, erro = false) {
-  const el = $('#mensagem');
-  el.textContent = texto;
-  el.classList.toggle('erro', erro);
-  el.hidden = false;
-  clearTimeout(timerMsg);
-  timerMsg = setTimeout(() => { el.hidden = true; }, 6000);
-}
-
 function travar(form, travado) {
   form.querySelectorAll('button, input, select').forEach((el) => { el.disabled = travado; });
 }
@@ -66,23 +41,6 @@ function criar(tag, props = {}, ...filhos) {
 }
 
 const normalizarEmail = (e) => String(e || '').trim().toLowerCase();
-
-function traduzirErro(err) {
-  const c = err?.code || '';
-  const mapa = {
-    'auth/invalid-credential': 'E-mail ou senha incorretos.',
-    'auth/wrong-password': 'E-mail ou senha incorretos.',
-    'auth/user-not-found': 'E-mail ou senha incorretos.',
-    'auth/invalid-email': 'E-mail inválido.',
-    'auth/email-already-in-use': 'Já existe acesso com esse e-mail. Use "Entrar" ou "Esqueci a senha".',
-    'auth/weak-password': 'Senha fraca. Use pelo menos 8 caracteres.',
-    'auth/too-many-requests': 'Muitas tentativas. Aguarde alguns minutos e tente de novo.',
-    'auth/network-request-failed': 'Sem conexão com a internet.',
-    'permission-denied': 'Ação não permitida.',
-    'unavailable': 'Sem conexão com o servidor. Tente novamente.'
-  };
-  return mapa[c] || 'Não foi possível concluir. Tente novamente.';
-}
 
 // ---------- dados do cadastro ----------
 function lerDados(form) {
@@ -121,7 +79,7 @@ function apagarRascunho() {
 }
 
 // ---------- estado ----------
-let eu = null;              // dados do meu usuário no banco
+let eu = null;              // dados do meu usuário no banco (também em estado.eu)
 let pararMeuDoc = null;     // listener do meu documento
 let pararColecao = null;    // listener da lista de usuários (gestão)
 let usuarios = [];          // lista para a gestão
@@ -130,13 +88,14 @@ let pararViaturas = null;   // listener das viaturas
 let viaturas = [];
 let viaturaEditando = null;
 
-const ehGestao = () => eu && eu.situacao === 'ativo' && ['gestor', 'admin'].includes(eu.perfil);
-
 function pararTudo() {
   pararMeuDoc?.(); pararMeuDoc = null;
   pararColecao?.(); pararColecao = null;
   pararViaturas?.(); pararViaturas = null;
+  pararCautelas();
+  pararPainel();
   eu = null; usuarios = []; viaturas = [];
+  estado.eu = null; estado.viaturas = [];
 }
 
 // ---------- navegação por botões ----------
@@ -159,11 +118,12 @@ function rotear(user) {
   // Acompanha o meu cadastro em tempo real: quando o gestor aprovar, a tela muda sozinha.
   pararMeuDoc = onSnapshot(doc(db, 'usuarios', user.uid), (snap) => {
     if (!snap.exists()) {
-      eu = null;
+      eu = null; estado.eu = null;
       preencher($('#form-completar'), lerRascunho());
       return mostrar('tela-completar');
     }
     eu = { uid: user.uid, ...snap.data() };
+    estado.eu = eu;
     if (eu.situacao === 'pendente') {
       mostrarFicha();
       return mostrar('tela-aguardando');
@@ -175,9 +135,11 @@ function rotear(user) {
       return mostrar('tela-sem-acesso');
     }
     montarInicio();
-    const telasLogado = ['tela-inicio', 'tela-gestao', 'tela-viaturas', 'tela-viatura-form'];
+    avisar('eu', eu);
+    const telasLogado = ['tela-inicio', 'tela-gestao', 'tela-viaturas', 'tela-viatura-form', ...telasCautela, ...telasPainel];
     if (!telasLogado.includes(telaAtual())) mostrar('tela-inicio');
     if (['tela-gestao', 'tela-viatura-form'].includes(telaAtual()) && !ehGestao()) mostrar('tela-inicio');
+    if (telasPainel.includes(telaAtual()) && !acompanha()) mostrar('tela-inicio');
   }, (err) => {
     console.error(err);
     $('#msg-sem-acesso').textContent = 'Não foi possível verificar seu acesso agora.';
@@ -198,13 +160,16 @@ function mostrarFicha() {
 }
 
 function montarInicio() {
-  $('#saudacao').textContent = `Olá, ${eu.nomeGuerra}`;
+  $('#saudacao').textContent = `Olá, ${posto(eu)} ${eu.nomeGuerra}`;
   $('#info-usuario').textContent =
     `${eu.curso} · ${eu.turma} · nº ${eu.numero} · ${PERFIS[eu.perfil] || eu.perfil}`;
   $('#cartao-gestao').hidden = !ehGestao();
+  $('#cartao-painel').hidden = !acompanha();
   if (ehGestao() && !pararColecao) iniciarGestao();
   if (!ehGestao() && pararColecao) { pararColecao(); pararColecao = null; }
   if (!pararViaturas) iniciarViaturas();
+  iniciarCautelas();
+  if (acompanha()) iniciarPainel(); else pararPainel();
 }
 
 // ---------- login ----------
@@ -454,6 +419,8 @@ const idViatura = (prefixo) => 'vtr-' + String(prefixo).toLowerCase();
 function iniciarViaturas() {
   pararViaturas = onSnapshot(collection(db, 'viaturas'), (snap) => {
     viaturas = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    estado.viaturas = viaturas;
+    avisar('viaturas', viaturas);
     atualizarResumoViaturas();
     if (telaAtual() === 'tela-viaturas') renderizarViaturas();
   }, (err) => {
@@ -463,7 +430,7 @@ function iniciarViaturas() {
 }
 
 function atualizarResumoViaturas() {
-  const disp = viaturas.filter((v) => v.situacao === 'ativa').length;
+  const disp = viaturas.filter((v) => v.situacao === 'ativa' && !v.cautelaAtual).length;
   const texto = viaturas.length
     ? `${disp} disponíve${disp === 1 ? 'l' : 'is'} de ${viaturas.length} viatura${viaturas.length === 1 ? '' : 's'}`
     : 'Nenhuma viatura cadastrada';
@@ -502,8 +469,9 @@ function itemViatura(v) {
     criar('div', { class: 'item-nome', texto: v.modelo }),
     criar('div', { class: 'item-det', texto: extras }),
     criar('div', { class: 'item-det', texto: placaAno }),
+    v.situacao !== 'ativa' && v.motivoSituacao ? criar('div', { class: 'item-det', texto: `Motivo: ${v.motivoSituacao}` }) : null,
     criar('div', { class: 'item-tags' },
-      criar('span', { class: `situacao ${v.situacao}`, texto: SITUACOES[v.situacao] || v.situacao }),
+      criar('span', { class: `situacao ${v.situacao}`, texto: v.situacao === 'ativa' && v.cautelaAtual ? 'Cautelada' : SITUACOES[v.situacao] || v.situacao }),
       criar('span', { class: 'etiqueta', texto: `Prioridade ${v.prioridade}` })
     )
   );
@@ -532,6 +500,7 @@ function abrirFormViatura(v) {
     f.kmAtual.value = v.kmAtual ?? '';
     f.prioridade.value = v.prioridade ?? '';
     f.situacao.value = v.situacao || 'ativa';
+    f.motivoSituacao.value = v.motivoSituacao || '';
     f.temRadio.checked = !!v.temRadio;
     f.usaArla.checked = !!v.usaArla;
     f.nova.checked = !!v.nova;
@@ -552,6 +521,7 @@ function lerViatura(f) {
     kmAtual: Number(String(f.kmAtual.value || '').replace(/\D/g, '')),
     prioridade: Number(String(f.prioridade.value || '').replace(/\D/g, '')),
     situacao: f.situacao.value,
+    motivoSituacao: f.situacao.value === 'ativa' ? null : (String(f.motivoSituacao.value || '').trim().slice(0, 200) || null),
     temRadio: f.temRadio.checked,
     usaArla: f.usaArla.checked,
     nova: f.nova.checked
@@ -581,9 +551,14 @@ $('#form-viatura').addEventListener('submit', async (e) => {
   if (!v.prioridade) return mensagem('Informe a prioridade (1 ou mais).', true);
   const id = viaturaEditando ? viaturaEditando.id : idViatura(v.prefixo);
   if (!viaturaEditando && viaturas.some((x) => x.id === id)) return mensagem('Já existe viatura com esse prefixo.', true);
+  const atual = viaturas.find((x) => x.id === id);
+  if (atual?.cautelaAtual && v.situacao !== atual.situacao && v.situacao !== 'ativa') {
+    return mensagem('A viatura está cautelada. Mude a situação depois da devolução.', true);
+  }
   travar(f, true);
   try {
-    await setDoc(doc(db, 'viaturas', id), { ...v, atualizadoPor: eu.uid, atualizadoEm: serverTimestamp() });
+    // merge: mantém a cautela em andamento e o último combustível, que não são do cadastro
+    await setDoc(doc(db, 'viaturas', id), { ...v, atualizadoPor: eu.uid, atualizadoEm: serverTimestamp() }, { merge: !!viaturaEditando });
     mensagem(viaturaEditando ? 'Viatura atualizada.' : 'Viatura cadastrada.');
     renderizarViaturas();
     mostrar('tela-viaturas');
@@ -604,7 +579,7 @@ $('#btn-importar').addEventListener('click', async (e) => {
   try {
     const lote = writeBatch(db);
     VIATURAS_INICIAIS.forEach((v) => lote.set(doc(db, 'viaturas', idViatura(v.prefixo)), {
-      ...v, placa: '', ano: null, atualizadoPor: eu.uid, atualizadoEm: serverTimestamp()
+      ...v, placa: '', ano: null, motivoSituacao: null, atualizadoPor: eu.uid, atualizadoEm: serverTimestamp()
     }));
     await lote.commit();
     mensagem('Viaturas importadas.');
