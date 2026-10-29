@@ -3,8 +3,9 @@
 Sistema de cautela de viaturas da Escola de Formação de Oficiais (EsFO – APMG – PMPR).
 Substitui o livro de cautelas e o formulário por um aplicativo web (PWA) usado no celular.
 
-**Situação:** versão 0.3 — login, autocadastro com aprovação do gestor, gestão de usuários e
-cadastro de viaturas. Cautela, devolução, fotos e alertas ainda não foram implementados.
+**Situação:** versão 0.4 — além do acesso, usuários e viaturas: cautela e devolução com assinatura
+(biometria do celular ou senha), fotos enviadas ao Drive pela ponte, avarias, abastecimentos,
+painel da frota e relatórios em PDF para baixar ou compartilhar.
 
 ## Arquitetura (custo zero)
 
@@ -14,8 +15,8 @@ cadastro de viaturas. Cautela, devolução, fotos e alertas ainda não foram imp
 | Hospedagem | GitHub Pages — publicação automática a cada alteração |
 | Login | Firebase Authentication — e-mail e senha |
 | Banco de dados | Cloud Firestore — `southamerica-east1` (São Paulo) |
-| Fotos | Google Drive da conta do projeto, via ponte Apps Script (a fazer) |
-| Alertas e backup | Apps Script com gatilhos de horário (a fazer) |
+| Arquivos (fotos, termos, relatórios, cópias) | Google Drive da conta do projeto, via ponte Apps Script (`ponte-drive/`) |
+| Alertas, relatórios automáticos e backup | A mesma ponte, com gatilhos de horário |
 
 Conta dona de tudo: `siscautela.esfo@gmail.com` — nunca vincular cartão de crédito ao projeto Firebase.
 
@@ -24,13 +25,22 @@ Conta dona de tudo: `siscautela.esfo@gmail.com` — nunca vincular cartão de cr
 ```
 public/                 app (o que vai para o GitHub Pages)
   index.html            telas
-  css/estilo.css
-  js/app.js             login, autocadastro, aprovação e gestão de usuários
+  css/estilo.css        visual dos brasões (azul-noite, filete ouro, Barlow)
+  js/app.js             login, autocadastro, aprovação, gestão de usuários e viaturas
+  js/nucleo.js          Firebase, estado, telas, formatação e regras de negócio comuns
+  js/cautela.js         início do militar, cautela, devolução, abastecimento, minhas cautelas
+  js/assinatura.js      assinatura por biometria (WebAuthn) ou senha
+  js/painel.js          painel da frota, cautelas, avarias, encerramento pela gestão
+  js/relatorios.js      relatórios, termo de cautela, PDF e compartilhar
+  js/ponte.js           envio das fotos ao Drive (fila no celular) e leitura dos arquivos
+  js/config.js          endereço da ponte do Drive
   js/firebase-config.js configuração pública do projeto (não é segredo)
   js/viaturas-iniciais.js  11 viaturas copiadas do app VTR-ESFO (importação única)
+  img/                  brasões e figuras das viaturas
   sw.js, manifest.webmanifest, icons/   PWA
 firestore.rules         regras de segurança do banco
 tests/regras.test.js    testes das regras (emulador)
+ponte-drive/            Apps Script da ponte com o Drive (instalar na conta do sistema; ver LEIAME)
 .github/workflows/      publicação automática no GitHub Pages
 ```
 
@@ -66,6 +76,32 @@ combustível, KM atual, prioridade (1 = usar primeiro), situação (`ativa`, `ma
 - Com a lista vazia, a gestão vê o botão **Importar viaturas do VTR-ESFO**, que cadastra as 11
   viaturas do app VTR-ESFO (placa e ano ficam para completar).
 
+## Cautela e devolução
+
+1. **Início do militar:** viaturas disponíveis na ordem de prioridade (as mais antigas primeiro) e as
+   indisponíveis abaixo. Toque na viatura para cautelar; outra que não a primeira pede o motivo.
+2. **Cautela:** viatura → missão e previsão de retorno (até 24 h) → KM, combustível, 5 fotos e avaria
+   (se houver) → assinatura. Numeração sequencial (C-0001…), gravada numa transação junto com a
+   viatura e o militar: uma cautela aberta por militar e por viatura.
+3. **Devolução:** KM (não menor que o de saída; acima de 400 km pede confirmação), combustível
+   (na reserva pede abastecimento ou justificativa), 5 fotos, avaria e observações → assinatura.
+4. **Avaria:** leve fica registrada e ligada à cautela anterior para apuração; grave tira a viatura
+   de uso até a gestão resolver.
+5. **Fotos:** comprimidas no celular e guardadas numa fila; sobem ao Drive em segundo plano pela
+   ponte (`public/js/config.js` → `URL_PONTE`). Sem a ponte ligada, ficam guardadas no aparelho.
+6. **Assinatura:** biometria do celular (WebAuthn; a biometria não sai do aparelho) ou a senha do
+   SisCautela, conferida no Firebase.
+
+## Painel e relatórios (conferente, gestor e administrador)
+
+- **Painel:** disponíveis, cauteladas, em atraso e indisponíveis; quem está com cada viatura;
+  alertas de atraso, KM divergente, avarias e cadastros pendentes.
+- **Cautelas:** últimos 90 dias, com filtro por viatura e a ficha de cada cautela (fotos e termo).
+- **Avarias:** em apuração / resolvida; resolver a avaria grave libera a viatura.
+- **Relatórios:** do dia, uso da frota no período, ficha da viatura e histórico do militar.
+  Prévia na tela, **PDF** com os brasões e **compartilhar** (menu do celular ou resumo em texto).
+- A gestão pode **encerrar uma cautela** em último caso (com motivo e assinatura).
+
 ## Publicar
 
 **App:** https://siscautelaesfo-commits.github.io/siscautela/
@@ -90,7 +126,6 @@ npm run test:regras
 
 ## Próximas etapas
 
-- Assinatura por biometria (WebAuthn) no primeiro acesso e em cada cautela
-- Completar placa e ano das viaturas
-- Cautela e devolução com fotos (ponte Apps Script → Drive)
-- Painel da frota, alertas e relatórios
+- Instalar a ponte do Drive na conta do sistema e preencher `URL_PONTE` (ver `ponte-drive/LEIAME.md`)
+- Completar placa e ano das viaturas e definir a ordem oficial de prioridade
+- Conferência diária do claviculário pelo conferente

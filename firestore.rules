@@ -1,7 +1,9 @@
 rules_version = '2';
 
-// Regras de segurança do SisCautela EsFO — versão 0.3 (autocadastro com aprovação e viaturas)
+// Regras de segurança do SisCautela EsFO — versão 0.4 (cautela, devolução, avarias e abastecimentos)
 // Princípio: tudo é bloqueado, exceto o que está liberado abaixo.
+// A ponte do Drive (Apps Script da conta do sistema) grava com a autorização da própria conta,
+// sem passar por estas regras. Os campos que só ela grava ficam bloqueados para o app.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -14,6 +16,15 @@ service cloud.firestore {
     }
     function caminhoUsuario(uid) {
       return /databases/$(database)/documents/usuarios/$(uid);
+    }
+    function caminhoViatura(id) {
+      return /databases/$(database)/documents/viaturas/$(id);
+    }
+    function caminhoCautela(id) {
+      return /databases/$(database)/documents/cautelas/$(id);
+    }
+    function caminhoAvaria(id) {
+      return /databases/$(database)/documents/avarias/$(id);
     }
     function eu() {
       return get(caminhoUsuario(request.auth.uid)).data;
@@ -29,8 +40,28 @@ service cloud.firestore {
     function gestao() {
       return temPerfil(['gestor', 'admin']);
     }
+    function acompanha() {
+      return temPerfil(['conferente', 'gestor', 'admin']);
+    }
     function souAdmin() {
       return temPerfil(['admin']);
+    }
+    function mudou() {
+      return request.resource.data.diff(resource.data).affectedKeys();
+    }
+    function texto(v, min, max) {
+      return v is string && v.size() >= min && v.size() <= max;
+    }
+    function textoOuNulo(v, max) {
+      return v == null || (v is string && v.size() <= max);
+    }
+    function assinaturaValida(a) {
+      return a is map && a.keys().hasOnly(['metodo', 'em'])
+        && a.metodo in ['biometria', 'senha'] && a.em == request.time;
+    }
+    // Campos que só a ponte do Drive grava
+    function camposDaPonte() {
+      return ['arquivos', 'termo', 'alertaAtraso', 'fotos', 'cupom'];
     }
 
     // Dados que o próprio militar informa no cadastro.
@@ -43,8 +74,8 @@ service cloud.firestore {
 
     // ---------- usuários ----------
     match /usuarios/{uid} {
-      allow get: if (logado() && uid == request.auth.uid) || temPerfil(['conferente', 'gestor', 'admin']);
-      allow list: if temPerfil(['conferente', 'gestor', 'admin']);
+      allow get: if (logado() && uid == request.auth.uid) || acompanha();
+      allow list: if acompanha();
 
       // Autocadastro: só o próprio militar, com e-mail confirmado,
       // sempre como "usuario" e "pendente" (aguardando aprovação).
@@ -61,20 +92,37 @@ service cloud.firestore {
       // Enquanto pendente, o próprio militar pode corrigir os seus dados.
       allow update: if logado() && uid == request.auth.uid
         && resource.data.situacao == 'pendente'
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['numero', 'nomeGuerra', 'curso', 'turma'])
+        && mudou().hasOnly(['numero', 'nomeGuerra', 'curso', 'turma'])
         && dadosValidos(request.resource.data);
+
+      // Ativo pode informar o próprio telefone (contato em caso de atraso).
+      allow update: if ativo() && uid == request.auth.uid
+        && mudou().hasOnly(['telefone'])
+        && textoOuNulo(request.resource.data.telefone, 20);
+
+      // Cautela em andamento: marcada ao cautelar e limpa na devolução, junto com a cautela.
+      allow update: if ativo() && uid == request.auth.uid
+        && mudou().hasOnly(['cautelaAtual'])
+        && resource.data.get('cautelaAtual', null) == null
+        && request.resource.data.cautelaAtual is string
+        && getAfter(caminhoCautela(request.resource.data.cautelaAtual)).data.userId == uid
+        && getAfter(caminhoCautela(request.resource.data.cautelaAtual)).data.situacao == 'aberta';
+      allow update: if (ativo() && uid == request.auth.uid || gestao())
+        && mudou().hasOnly(['cautelaAtual'])
+        && resource.data.get('cautelaAtual', null) is string
+        && request.resource.data.cautelaAtual == null
+        && getAfter(caminhoCautela(resource.data.cautelaAtual)).data.situacao == 'encerrada';
 
       // Gestão: aprova, recusa, desativa, reativa e define o perfil.
       // Ninguém altera o próprio cadastro; gestor só lida com usuário/conferente; admin com todos.
       allow update: if gestao()
         && uid != request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys()
-             .hasOnly(['situacao', 'perfil', 'decididoPor', 'decididoEm'])
+        && mudou().hasOnly(['situacao', 'perfil', 'decididoPor', 'decididoEm'])
         && request.resource.data.situacao in ['ativo', 'recusado', 'desativado']
         && request.resource.data.perfil in ['usuario', 'conferente', 'gestor', 'admin']
         && request.resource.data.decididoPor == request.auth.uid
         && request.resource.data.decididoEm == request.time
+        && (request.resource.data.situacao == 'ativo' || resource.data.get('cautelaAtual', null) == null)
         && (souAdmin()
             || (resource.data.perfil in ['usuario', 'conferente']
                 && request.resource.data.perfil in ['usuario', 'conferente']));
@@ -86,7 +134,9 @@ service cloud.firestore {
     // ID do documento = "vtr-" + prefixo em minúsculas.
     function viaturaValida(d, id) {
       return d.keys().hasOnly(['prefixo', 'modelo', 'placa', 'ano', 'combustivel', 'kmAtual', 'prioridade',
-                               'situacao', 'temRadio', 'usaArla', 'nova', 'atualizadoPor', 'atualizadoEm'])
+                               'situacao', 'motivoSituacao', 'temRadio', 'usaArla', 'nova',
+                               'cautelaAtual', 'ultimaCautela', 'combNivel', 'avariaBloqueio',
+                               'atualizadoPor', 'atualizadoEm'])
         && d.prefixo is string && d.prefixo.matches('^[A-Z0-9-]{1,10}$')
         && id == 'vtr-' + d.prefixo.lower()
         && d.modelo is string && d.modelo.size() >= 2 && d.modelo.size() <= 60
@@ -96,6 +146,7 @@ service cloud.firestore {
         && d.kmAtual is int && d.kmAtual >= 0 && d.kmAtual <= 9999999
         && d.prioridade is int && d.prioridade >= 1 && d.prioridade <= 999
         && d.situacao in ['ativa', 'manutencao', 'baixada', 'usoExclusivo']
+        && textoOuNulo(d.get('motivoSituacao', null), 200)
         && d.temRadio is bool && d.usaArla is bool && d.nova is bool
         && d.atualizadoPor == request.auth.uid
         && d.atualizadoEm == request.time;
@@ -103,10 +154,175 @@ service cloud.firestore {
 
     match /viaturas/{id} {
       allow read: if ativo();
-      allow create: if gestao() && viaturaValida(request.resource.data, id);
+      allow create: if gestao() && viaturaValida(request.resource.data, id)
+        && request.resource.data.get('cautelaAtual', null) == null;
+      // A gestão edita o cadastro, mas a cautela em andamento só muda pela cautela e pela devolução.
       allow update: if gestao() && viaturaValida(request.resource.data, id)
-        && request.resource.data.prefixo == resource.data.prefixo;
+        && request.resource.data.prefixo == resource.data.prefixo
+        && request.resource.data.get('cautelaAtual', null) == resource.data.get('cautelaAtual', null)
+        && (request.resource.data.situacao == 'ativa' || resource.data.get('cautelaAtual', null) == null
+            || request.resource.data.situacao == resource.data.situacao);
+
+      // Cautela: a viatura fica presa à cautela aberta, com o KM e o combustível da saída.
+      allow update: if ativo()
+        && mudou().hasOnly(['cautelaAtual', 'kmAtual', 'combNivel', 'atualizadoEm'])
+        && request.resource.data.atualizadoEm == request.time
+        && resource.data.situacao == 'ativa'
+        && resource.data.get('cautelaAtual', null) == null
+        && request.resource.data.cautelaAtual is string
+        && getAfter(caminhoCautela(request.resource.data.cautelaAtual)).data.userId == request.auth.uid
+        && getAfter(caminhoCautela(request.resource.data.cautelaAtual)).data.vtrId == id
+        && getAfter(caminhoCautela(request.resource.data.cautelaAtual)).data.situacao == 'aberta'
+        && request.resource.data.kmAtual == getAfter(caminhoCautela(request.resource.data.cautelaAtual)).data.kmSaida
+        && request.resource.data.combNivel == getAfter(caminhoCautela(request.resource.data.cautelaAtual)).data.combSaida;
+
+      // Devolução: solta a viatura, grava o KM e o combustível da volta e guarda a última cautela
+      // (para ligar a ela uma avaria encontrada na retirada seguinte).
+      allow update: if ativo()
+        && mudou().hasOnly(['cautelaAtual', 'ultimaCautela', 'kmAtual', 'combNivel', 'atualizadoEm'])
+        && request.resource.data.atualizadoEm == request.time
+        && resource.data.get('cautelaAtual', null) is string
+        && request.resource.data.cautelaAtual == null
+        && request.resource.data.ultimaCautela == resource.data.cautelaAtual
+        && getAfter(caminhoCautela(resource.data.cautelaAtual)).data.situacao == 'encerrada'
+        && getAfter(caminhoCautela(resource.data.cautelaAtual)).data.encerradaPor == request.auth.uid
+        && request.resource.data.kmAtual == getAfter(caminhoCautela(resource.data.cautelaAtual)).data.kmRetorno
+        && request.resource.data.combNivel == getAfter(caminhoCautela(resource.data.cautelaAtual)).data.combRetorno;
+
+      // Avaria grave encontrada pelo militar: a viatura sai de uso até a gestão liberar.
+      allow update: if ativo()
+        && mudou().hasOnly(['situacao', 'motivoSituacao', 'avariaBloqueio', 'atualizadoEm'])
+        && request.resource.data.atualizadoEm == request.time
+        && request.resource.data.situacao == 'manutencao'
+        && textoOuNulo(request.resource.data.motivoSituacao, 200)
+        && request.resource.data.avariaBloqueio is string
+        && getAfter(caminhoAvaria(request.resource.data.avariaBloqueio)).data.gravidade == 'grave'
+        && getAfter(caminhoAvaria(request.resource.data.avariaBloqueio)).data.vtrId == id
+        && getAfter(caminhoAvaria(request.resource.data.avariaBloqueio)).data.registradaPor == request.auth.uid
+        && getAfter(caminhoAvaria(request.resource.data.avariaBloqueio)).data.em == request.time;
+
       allow delete: if false;
+    }
+
+    // ---------- contador das cautelas (C-0001, C-0002…) ----------
+    match /contadores/{id} {
+      allow read: if ativo();
+      allow create: if ativo() && id == 'cautelas'
+        && request.resource.data.keys().hasOnly(['ultimo'])
+        && request.resource.data.ultimo == 1
+        && existsAfter(caminhoCautela('c1'));
+      allow update: if ativo() && id == 'cautelas'
+        && request.resource.data.keys().hasOnly(['ultimo'])
+        && request.resource.data.ultimo == resource.data.ultimo + 1
+        && existsAfter(caminhoCautela('c' + string(request.resource.data.ultimo)));
+      allow delete: if false;
+    }
+
+    // ---------- cautelas ----------
+    // ID = "c" + número sequencial; o contador e a cautela são gravados juntos (transação).
+    match /cautelas/{id} {
+      allow read: if ativo() && (resource.data.userId == request.auth.uid || acompanha());
+
+      allow create: if ativo()
+        && request.resource.data.keys().hasOnly(['seq', 'numero', 'vtrId', 'vtrPrefixo', 'userId', 'userNome',
+             'missao', 'justificativa', 'saida', 'previsao', 'kmSaida', 'combSaida', 'divergenciaKm',
+             'assinaturaSaida', 'situacao'])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.situacao == 'aberta'
+        && request.resource.data.seq is int
+        && id == 'c' + string(request.resource.data.seq)
+        && request.resource.data.numero is string && request.resource.data.numero.matches('^C-[0-9]{4,}$')
+        && getAfter(/databases/$(database)/documents/contadores/cautelas).data.ultimo == request.resource.data.seq
+        && texto(request.resource.data.userNome, 2, 60)
+        && texto(request.resource.data.missao, 3, 150)
+        && textoOuNulo(request.resource.data.justificativa, 150)
+        && request.resource.data.saida == request.time
+        && request.resource.data.previsao is timestamp
+        && request.resource.data.previsao > request.time
+        && request.resource.data.previsao < request.time + duration.value(24, 'h')
+        && request.resource.data.kmSaida is int && request.resource.data.kmSaida >= 0 && request.resource.data.kmSaida <= 9999999
+        && request.resource.data.combSaida is int && request.resource.data.combSaida >= 0 && request.resource.data.combSaida <= 4
+        && (request.resource.data.divergenciaKm == null || request.resource.data.divergenciaKm is int)
+        && assinaturaValida(request.resource.data.assinaturaSaida)
+        // viatura disponível, presa a esta cautela na mesma gravação
+        && get(caminhoViatura(request.resource.data.vtrId)).data.situacao == 'ativa'
+        && get(caminhoViatura(request.resource.data.vtrId)).data.get('cautelaAtual', null) == null
+        && get(caminhoViatura(request.resource.data.vtrId)).data.prefixo == request.resource.data.vtrPrefixo
+        && getAfter(caminhoViatura(request.resource.data.vtrId)).data.cautelaAtual == id
+        // uma cautela aberta por militar
+        && eu().get('cautelaAtual', null) == null
+        && getAfter(caminhoUsuario(request.auth.uid)).data.cautelaAtual == id;
+
+      // Devolução: pelo próprio militar ou, em último caso, pela gestão (fica registrado quem encerrou).
+      allow update: if ativo()
+        && resource.data.situacao == 'aberta'
+        && (resource.data.userId == request.auth.uid || gestao())
+        && mudou().hasOnly(['situacao', 'devolucao', 'kmRetorno', 'combRetorno', 'assinaturaRetorno',
+             'obs', 'justComb', 'encerradaPor'])
+        && request.resource.data.situacao == 'encerrada'
+        && request.resource.data.devolucao == request.time
+        && request.resource.data.encerradaPor == request.auth.uid
+        && request.resource.data.kmRetorno is int
+        && request.resource.data.kmRetorno >= resource.data.kmSaida
+        && request.resource.data.kmRetorno <= resource.data.kmSaida + 5000
+        && request.resource.data.combRetorno is int && request.resource.data.combRetorno >= 0 && request.resource.data.combRetorno <= 4
+        && textoOuNulo(request.resource.data.get('obs', null), 500)
+        && textoOuNulo(request.resource.data.get('justComb', null), 200)
+        && assinaturaValida(request.resource.data.assinaturaRetorno)
+        && getAfter(caminhoViatura(resource.data.vtrId)).data.get('cautelaAtual', null) == null
+        && getAfter(caminhoUsuario(resource.data.userId)).data.get('cautelaAtual', null) == null;
+
+      allow delete: if false;
+    }
+
+    // ---------- avarias ----------
+    match /avarias/{id} {
+      allow read: if ativo() && (resource.data.registradaPor == request.auth.uid || acompanha());
+      allow create: if ativo()
+        && request.resource.data.keys().hasOnly(['vtrId', 'vtrPrefixo', 'cautelaId', 'origemProvavel',
+             'descricao', 'gravidade', 'situacao', 'registradaPor', 'registradaNome', 'em'])
+        && request.resource.data.registradaPor == request.auth.uid
+        && texto(request.resource.data.registradaNome, 2, 60)
+        && request.resource.data.em == request.time
+        && request.resource.data.situacao == 'aberta'
+        && request.resource.data.gravidade in ['leve', 'grave']
+        && texto(request.resource.data.descricao, 5, 500)
+        && exists(caminhoViatura(request.resource.data.vtrId))
+        && get(caminhoViatura(request.resource.data.vtrId)).data.prefixo == request.resource.data.vtrPrefixo
+        && (request.resource.data.cautelaId == null
+            || getAfter(caminhoCautela(request.resource.data.cautelaId)).data.userId == request.auth.uid)
+        && (request.resource.data.origemProvavel == null || request.resource.data.origemProvavel is string);
+      allow update: if gestao()
+        && mudou().hasOnly(['situacao', 'tratadaPor', 'tratadaEm'])
+        && request.resource.data.situacao in ['aberta', 'apuracao', 'resolvida']
+        && request.resource.data.tratadaPor == request.auth.uid
+        && request.resource.data.tratadaEm == request.time;
+      allow delete: if false;
+    }
+
+    // ---------- abastecimentos ----------
+    match /abastecimentos/{id} {
+      allow read: if ativo() && (resource.data.userId == request.auth.uid || acompanha());
+      allow create: if ativo()
+        && request.resource.data.keys().hasOnly(['cautelaId', 'vtrId', 'vtrPrefixo', 'userId', 'userNome', 'em', 'km',
+             'litros', 'valor', 'posto'])
+        && texto(request.resource.data.userNome, 2, 60)
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.em == request.time
+        && getAfter(caminhoCautela(request.resource.data.cautelaId)).data.userId == request.auth.uid
+        && getAfter(caminhoCautela(request.resource.data.cautelaId)).data.vtrId == request.resource.data.vtrId
+        && request.resource.data.litros is number && request.resource.data.litros > 0 && request.resource.data.litros <= 200
+        && request.resource.data.valor is number && request.resource.data.valor >= 0 && request.resource.data.valor <= 5000
+        && request.resource.data.km is int && request.resource.data.km >= 0
+        && textoOuNulo(request.resource.data.posto, 80)
+        && texto(request.resource.data.vtrPrefixo, 1, 10);
+      allow update, delete: if false;
+    }
+
+    // ---------- trilha de auditoria (gravada pela ponte) ----------
+    match /log/{id} {
+      allow read: if gestao();
+      allow write: if false;
     }
 
     // ---------- todo o resto: bloqueado ----------
