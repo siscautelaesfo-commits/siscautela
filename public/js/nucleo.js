@@ -111,8 +111,10 @@ export const horas = (msTotal) => (msTotal / 3600e3).toLocaleString('pt-BR', { m
 export const isoDia = (t) => { const d = new Date(t), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
 export const inicioDia = (iso) => new Date(iso + 'T00:00').getTime();
 
-// "Cad. Romeiro" / "Al Of Silva"
-export const posto = (u) => (u?.curso === 'CHOE' ? 'Al Of' : 'Cad.');
+// "Cad. Romeiro" / "Al Of Silva" / "Cap Souza" (oficial do quadro)
+export const POSTOS = ['Asp Of', '2º Ten', '1º Ten', 'Cap', 'Maj', 'Ten Cel', 'Cel'];
+export const CURSOS = { CFO: 'CFO', CHOE: 'CHOE', OFICIAL: 'Oficial' };
+export const posto = (u) => (u?.curso === 'OFICIAL' ? (u.posto || 'Of') : u?.curso === 'CHOE' ? 'Al Of' : 'Cad.');
 export const nomeMilitar = (u) => (u ? `${posto(u)} ${u.nomeGuerra || ''}`.trim() : '—');
 
 // ---------- regras de negócio ----------

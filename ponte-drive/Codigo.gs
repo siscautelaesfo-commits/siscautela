@@ -332,7 +332,7 @@ function gerarTermo_(c) {
     const assin = function (s) { return s ? (s.metodo === 'senha' ? 'Senha pessoal' : 'Biometria do celular') + ' em ' + dataHora_(s.em) : '—'; };
     const pares = [
       ['Viatura', prefixo + ' · ' + (v.modelo || '') + ' · placa ' + (v.placa || '')],
-      ['Militar', nomeDe_(usuario) + ' · ' + (usuario.curso || '') + ' · ' + (usuario.turma || usuario.pelotao || '')],
+      ['Militar', nomeDe_(usuario) + ' · ' + (usuario.curso === 'OFICIAL' ? 'Oficial' : usuario.curso || '') + ' · ' + (usuario.turma || usuario.pelotao || '')],
       ['Missão', c.missao || '—'],
     ];
     if (c.justificativa) pares.push(['Fora da ordem de prioridade', c.justificativa]);
@@ -873,9 +873,9 @@ function prefixoDe_(vtrId) {
   return p;
 }
 
-// "Cad. Romeiro" (CFO) ou "Al Of Silva" (CHOE), como no app
+// "Cad. Romeiro" (CFO), "Al Of Silva" (CHOE) ou "Cap Souza" (oficial do quadro), como no app
 function nomeDe_(u) {
-  if (u.nomeGuerra) return (u.curso === 'CHOE' ? 'Al Of ' : 'Cad. ') + u.nomeGuerra;
+  if (u.nomeGuerra) return (u.curso === 'OFICIAL' ? (u.posto || 'Of') + ' ' : u.curso === 'CHOE' ? 'Al Of ' : 'Cad. ') + u.nomeGuerra;
   return ((u.posto ? u.posto + ' ' : '') + (u.nome || '')).trim() || '—';
 }
 function limparNome_(s) {

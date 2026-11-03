@@ -9,7 +9,7 @@ import {
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { VIATURAS_INICIAIS } from './viaturas-iniciais.js';
 import {
-  auth, db, estado, avisar, $, mostrar, telaAtual, mensagem, traduzirErro, ehGestao, acompanha, SITUACOES, posto
+  auth, db, estado, avisar, $, mostrar, telaAtual, mensagem, traduzirErro, ehGestao, acompanha, SITUACOES, posto, POSTOS, CURSOS
 } from './nucleo.js';
 import { iniciarCautelas, pararCautelas, telasCautela } from './cautela.js';
 import { sincronizarMembros, pararClaviculario } from './claviculario.js';
@@ -45,19 +45,37 @@ const normalizarEmail = (e) => String(e || '').trim().toLowerCase();
 
 // ---------- dados do cadastro ----------
 function lerDados(form) {
-  return {
+  const d = {
     numero: String(form.numero.value || '').replace(/\D/g, ''),
     nomeGuerra: String(form.nomeGuerra.value || '').trim().replace(/\s+/g, ' '),
     curso: form.curso.value,
     turma: String(form.turma.value || '').trim().replace(/\s+/g, ' ')
   };
+  if (d.curso === 'OFICIAL') d.posto = form.posto.value;   // só o oficial do quadro tem posto
+  return d;
 }
+
+// Oficial do quadro: mostra o posto e troca "Turma / pelotão" por "Função ou seção"
+function ajustarCurso(form) {
+  const oficial = form.curso.value === 'OFICIAL';
+  form.querySelector('[data-so-oficial]').hidden = !oficial;
+  form.posto.required = oficial;
+  form.querySelector('[data-rotulo-turma]').textContent = oficial ? 'Função ou seção' : 'Turma / pelotão';
+  form.turma.placeholder = oficial ? 'Ex.: Coordenação do CFO' : 'Ex.: 1º Pel Alfa';
+}
+['#form-primeiro-acesso', '#form-completar'].forEach((sel) => {
+  const f = document.querySelector(sel);
+  f?.curso.addEventListener('change', () => ajustarCurso(f));
+  f?.addEventListener('reset', () => setTimeout(() => ajustarCurso(f)));
+});
+const cursoTexto = (u) => (u.curso === 'OFICIAL' ? `Oficial · ${u.posto || ''}`.trim() : u.curso || '');
 
 function validarDados(d) {
   if (!/^\d{1,10}$/.test(d.numero)) return 'Informe o número (somente dígitos).';
   if (d.nomeGuerra.length < 2 || d.nomeGuerra.length > 40) return 'Informe o nome de guerra.';
-  if (!['CFO', 'CHOE'].includes(d.curso)) return 'Selecione o curso.';
-  if (d.turma.length < 1 || d.turma.length > 40) return 'Informe a turma ou pelotão.';
+  if (!Object.keys(CURSOS).includes(d.curso)) return 'Selecione o curso.';
+  if (d.curso === 'OFICIAL' && !POSTOS.includes(d.posto)) return 'Selecione o posto.';
+  if (d.turma.length < 1 || d.turma.length > 40) return d.curso === 'OFICIAL' ? 'Informe a função ou seção.' : 'Informe a turma ou pelotão.';
   return null;
 }
 
@@ -66,7 +84,9 @@ function preencher(form, d) {
   form.numero.value = d.numero || '';
   form.nomeGuerra.value = d.nomeGuerra || '';
   form.curso.value = d.curso || '';
+  form.posto.value = d.posto || '';
   form.turma.value = d.turma || '';
+  ajustarCurso(form);
 }
 
 function guardarRascunho(d) {
@@ -155,7 +175,7 @@ function mostrarFicha() {
   const dl = criar('dl', {},
     criar('dt', { texto: 'Nome de guerra' }), criar('dd', { texto: eu.nomeGuerra }),
     criar('dt', { texto: 'Número' }), criar('dd', { texto: eu.numero }),
-    criar('dt', { texto: 'Curso e turma' }), criar('dd', { texto: `${eu.curso} · ${eu.turma}` }),
+    criar('dt', { texto: eu.curso === 'OFICIAL' ? 'Posto e função' : 'Curso e turma' }), criar('dd', { texto: `${cursoTexto(eu)} · ${eu.turma}` }),
     criar('dt', { texto: 'E-mail' }), criar('dd', { texto: eu.email })
   );
   $('#ficha-aguardando').replaceChildren(dl);
@@ -164,7 +184,7 @@ function mostrarFicha() {
 function montarInicio() {
   $('#saudacao').textContent = `Olá, ${posto(eu)} ${eu.nomeGuerra}`;
   $('#info-usuario').textContent =
-    `${eu.curso} · ${eu.turma} · nº ${eu.numero} · ${PERFIS[eu.perfil] || eu.perfil}`;
+    `${cursoTexto(eu)} · ${eu.turma} · nº ${eu.numero} · ${PERFIS[eu.perfil] || eu.perfil}`;
   $('#cartao-gestao').hidden = !ehGestao();
   $('#cartao-painel').hidden = !acompanha();
   if (ehGestao() && !pararColecao) iniciarGestao();
@@ -375,7 +395,7 @@ function itemUsuario(u) {
       criar('span', { class: 'item-nome', texto: u.nomeGuerra || '(sem nome)' }),
       criar('span', { class: 'item-num', texto: `nº ${u.numero || '—'}` })
     ),
-    criar('div', { class: 'item-det', texto: `${u.curso || ''} · ${u.turma || ''}` }),
+    criar('div', { class: 'item-det', texto: `${cursoTexto(u)} · ${u.turma || ''}` }),
     criar('div', { class: 'item-det', texto: u.email || '' }),
     criar('span', { class: 'etiqueta', texto: etiqueta })
   );

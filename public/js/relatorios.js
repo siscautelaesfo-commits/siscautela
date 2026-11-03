@@ -7,7 +7,7 @@ import {
   db, estado, avisar, ehGestao, acompanha, $, mensagem, traduzirErro, abrirModal, fecharModal,
   esc, ms, km, reais, hora, dataBR, dataCurta, dataHora, dataHoraFixa, duracao, horas, isoDia, inicioDia,
   COMB, FOTOS, ATRASO_MIN, numeroCautela, estaAtrasada, devolveuAtrasado, porPrioridade, statusViatura, ST_TEXTO,
-  chaveiro, placa, selo, combMini, ICONE, SITUACOES
+  chaveiro, placa, selo, combMini, ICONE, SITUACOES, nomeMilitar
 } from './nucleo.js';
 import * as ponte from './ponte.js';
 
@@ -248,7 +248,7 @@ export async function gerarPdf(m) {
   pdf.setDrawColor(...COR.ouro); pdf.setLineWidth(1); pdf.line(L, y, L + W, y);
   y += 5;
   fonte('normal', 8, COR.cinza);
-  pdf.text(limpar(`Gerado pelo SisCautela em ${dataBR(Date.now())} às ${hora(Date.now())} por ${estado.eu ? (estado.eu.curso === 'CHOE' ? 'Al Of ' : 'Cad. ') + estado.eu.nomeGuerra : '—'}`), L, y);
+  pdf.text(limpar(`Gerado pelo SisCautela em ${dataBR(Date.now())} às ${hora(Date.now())} por ${estado.eu ? nomeMilitar(estado.eu) : '—'}`), L, y);
   y += 6;
 
   if (m.resumo.length) {

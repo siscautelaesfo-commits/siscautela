@@ -56,7 +56,7 @@
       <h1>Primeiro acesso</h1>
       <p>Preencha seus dados. Depois de confirmar o e-mail, o cadastro vai para aprovação do gestor.</p>
       <form id="form-primeiro-acesso" novalidate>
-        <label>Número de cadete / aluno
+        <label>Número (cadete, aluno ou RG do oficial)
           <input type="text" name="numero" inputmode="numeric" autocomplete="off" maxlength="10" required>
         </label>
         <label>Nome de guerra
@@ -67,9 +67,16 @@
             <option value="">Selecione</option>
             <option value="CFO">CFO</option>
             <option value="CHOE">CHOE</option>
+            <option value="OFICIAL">Oficial do quadro (não é aluno)</option>
           </select>
         </label>
-        <label>Turma / pelotão
+        <label data-so-oficial hidden>Posto
+          <select name="posto">
+            <option value="">Selecione</option>
+            <option>Asp Of</option><option>2º Ten</option><option>1º Ten</option><option>Cap</option><option>Maj</option><option>Ten Cel</option><option>Cel</option>
+          </select>
+        </label>
+        <label><span data-rotulo-turma>Turma / pelotão</span>
           <input type="text" name="turma" placeholder="Ex.: 1º Pel Alfa" autocomplete="off" maxlength="40" required>
         </label>
         <label>E-mail
@@ -120,7 +127,7 @@
       <h1>Enviar cadastro</h1>
       <p>E-mail confirmado. Confira seus dados e envie para aprovação do gestor.</p>
       <form id="form-completar" novalidate>
-        <label>Número de cadete / aluno
+        <label>Número (cadete, aluno ou RG do oficial)
           <input type="text" name="numero" inputmode="numeric" autocomplete="off" maxlength="10" required>
         </label>
         <label>Nome de guerra
@@ -131,9 +138,16 @@
             <option value="">Selecione</option>
             <option value="CFO">CFO</option>
             <option value="CHOE">CHOE</option>
+            <option value="OFICIAL">Oficial do quadro (não é aluno)</option>
           </select>
         </label>
-        <label>Turma / pelotão
+        <label data-so-oficial hidden>Posto
+          <select name="posto">
+            <option value="">Selecione</option>
+            <option>Asp Of</option><option>2º Ten</option><option>1º Ten</option><option>Cap</option><option>Maj</option><option>Ten Cel</option><option>Cel</option>
+          </select>
+        </label>
+        <label><span data-rotulo-turma>Turma / pelotão</span>
           <input type="text" name="turma" placeholder="Ex.: 1º Pel Alfa" autocomplete="off" maxlength="40" required>
         </label>
         <button type="submit" class="primario">Enviar para aprovação</button>

@@ -73,6 +73,13 @@ test('dados inválidos são recusados', async () => {
   await assertFails(criarPendente(novato(), { extra: true }));
 });
 
+test('oficial do quadro se cadastra com posto; cadete não informa posto', async () => {
+  await assertFails(criarPendente(novato(), { curso: 'OFICIAL' }));
+  await assertFails(criarPendente(novato(), { curso: 'OFICIAL', posto: 'General' }));
+  await assertFails(criarPendente(novato(), { curso: 'CFO', posto: 'Cap' }));
+  await assertSucceeds(criarPendente(novato(), { curso: 'OFICIAL', posto: 'Cap', turma: 'Coordenação do CFO' }));
+});
+
 test('pendente corrige os próprios dados, mas não se aprova', async () => {
   await criarPendente();
   const db = novato();

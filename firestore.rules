@@ -68,7 +68,9 @@ service cloud.firestore {
     function dadosValidos(d) {
       return d.numero is string && d.numero.matches('^[0-9]{1,10}$')
         && d.nomeGuerra is string && d.nomeGuerra.size() >= 2 && d.nomeGuerra.size() <= 40
-        && d.curso in ['CFO', 'CHOE']
+        && d.curso in ['CFO', 'CHOE', 'OFICIAL']
+        // Oficial do quadro informa o posto; cadete e aluno não
+        && (d.curso == 'OFICIAL' ? d.get('posto', '') in ['Asp Of', '2º Ten', '1º Ten', 'Cap', 'Maj', 'Ten Cel', 'Cel'] : !('posto' in d))
         && d.turma is string && d.turma.size() >= 1 && d.turma.size() <= 40;
     }
 
@@ -82,7 +84,7 @@ service cloud.firestore {
       allow create: if emailConfirmado()
         && uid == request.auth.uid
         && request.resource.data.keys().hasOnly(
-             ['numero', 'nomeGuerra', 'curso', 'turma', 'email', 'perfil', 'situacao', 'criadoEm'])
+             ['numero', 'nomeGuerra', 'curso', 'posto', 'turma', 'email', 'perfil', 'situacao', 'criadoEm'])
         && dadosValidos(request.resource.data)
         && request.resource.data.email == request.auth.token.email.lower()
         && request.resource.data.perfil == 'usuario'
@@ -92,7 +94,7 @@ service cloud.firestore {
       // Enquanto pendente, o próprio militar pode corrigir os seus dados.
       allow update: if logado() && uid == request.auth.uid
         && resource.data.situacao == 'pendente'
-        && mudou().hasOnly(['numero', 'nomeGuerra', 'curso', 'turma'])
+        && mudou().hasOnly(['numero', 'nomeGuerra', 'curso', 'posto', 'turma'])
         && dadosValidos(request.resource.data);
 
       // Ativo pode informar o próprio telefone (contato em caso de atraso).
