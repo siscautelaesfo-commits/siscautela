@@ -3,9 +3,10 @@
 Sistema de cautela de viaturas da Escola de Formação de Oficiais (EsFO – APMG – PMPR).
 Substitui o livro de cautelas e o formulário por um aplicativo web (PWA) usado no celular.
 
-**Situação:** versão 0.4 — além do acesso, usuários e viaturas: cautela e devolução com assinatura
+**Situação:** versão 0.5 — além do acesso, usuários e viaturas: cautela e devolução com assinatura
 (biometria do celular ou senha), fotos enviadas ao Drive pela ponte, avarias, abastecimentos,
-painel da frota e relatórios em PDF para baixar ou compartilhar.
+painel da frota, relatórios em PDF e o **claviculário eletrônico**, que abre a porta das chaves
+quando a cautela ou a devolução é assinada.
 
 ## Arquitetura (custo zero)
 
@@ -17,6 +18,7 @@ painel da frota e relatórios em PDF para baixar ou compartilhar.
 | Banco de dados | Cloud Firestore — `southamerica-east1` (São Paulo) |
 | Arquivos (fotos, termos, relatórios, cópias) | Google Drive da conta do projeto, via ponte Apps Script (`ponte-drive/`) |
 | Alertas, relatórios automáticos e backup | A mesma ponte, com gatilhos de horário |
+| Claviculário (ESP32 + fechadura 12 V) | Firebase Realtime Database — canal `claviculario/esfo01` |
 
 Conta dona de tudo: `siscautela.esfo@gmail.com` — nunca vincular cartão de crédito ao projeto Firebase.
 
@@ -33,12 +35,15 @@ public/                 app (o que vai para o GitHub Pages)
   js/painel.js          painel da frota, cautelas, avarias, encerramento pela gestão
   js/relatorios.js      relatórios, termo de cautela, PDF e compartilhar
   js/ponte.js           envio das fotos ao Drive (fila no celular) e leitura dos arquivos
+  js/claviculario.js    comando de abertura, situação da porta, eventos e lista de quem pode abrir
+  claviculario-virtual.html, js/claviculario-virtual.js   simulador do ESP32 para testes
   js/config.js          endereço da ponte do Drive
   js/firebase-config.js configuração pública do projeto (não é segredo)
   js/viaturas-iniciais.js  11 viaturas copiadas do app VTR-ESFO (importação única)
   img/                  brasões e figuras das viaturas
   sw.js, manifest.webmanifest, icons/   PWA
 firestore.rules         regras de segurança do banco
+database.rules.json     regras do Realtime Database (canal do claviculário)
 tests/regras.test.js    testes das regras (emulador)
 ponte-drive/            Apps Script da ponte com o Drive (instalar na conta do sistema; ver LEIAME)
 .github/workflows/      publicação automática no GitHub Pages
@@ -102,6 +107,43 @@ combustível, KM atual, prioridade (1 = usar primeiro), situação (`ativa`, `ma
   Prévia na tela, **PDF** com os brasões e **compartilhar** (menu do celular ou resumo em texto).
 - A gestão pode **encerrar uma cautela** em último caso (com motivo e assinatura).
 
+## Claviculário eletrônico
+
+O claviculário é um armário de chaves com uma porta só, travada por uma fechadura elétrica de 12 V
+e controlada por um ESP32 que escuta o Realtime Database. O app não precisa estar na mesma rede.
+
+**Como funciona no app**
+
+1. O militar assina a cautela (ou a devolução). O app grava a cautela no Firestore e, em seguida,
+   o pedido de abertura em `claviculario/esfo01/comando`.
+2. O ESP32 destrava a porta (1 bipe) e grava `status.ultimoComandoId`. A tela de concluída mostra
+   cada etapa: destravada, aberta, fechada e trancada (2 bipes).
+3. Se a porta não abrir em 10 s, ela tranca de novo; o militar toca em *Tentar de novo* (até 3 vezes)
+   ou usa *Abrir claviculário* no início, por até 15 min depois de assinar.
+4. O painel da frota mostra se o claviculário está online, se a porta está aberta, os alertas
+   (porta aberta mais de 30 s, abertura sem pedido) e os últimos eventos.
+
+**Contrato com o firmware** (`claviculario/esfo01`)
+
+| Caminho | Quem grava | Conteúdo |
+|---|---|---|
+| `comando` | app | `id`, `uid`, `cautelaId`, `tipo` (`retirada`/`devolucao`), `criadoEm` |
+| `status` | ESP32 | `porta` (`aberta`/`fechada`), `alerta`, `ultimoComandoId`, `ultimoSinal` |
+| `eventos/{id}` | ESP32 | `tipo`, `uid`, `cautelaId`, `ts` — nunca alterados nem apagados |
+
+O ESP32 ignora comando repetido (mesmo `id`) ou com mais de 60 s, e manda sinal de vida a cada minuto;
+sem sinal há 3 min, o app mostra o claviculário como offline.
+
+**Quem pode abrir:** quem está ativo no SisCautela. O app mantém a lista `membros/{uid}` sozinho quando
+um **administrador do claviculário** abre o app (aprovar e desativar cadastros já atualiza a lista).
+Administrador do claviculário é quem está em `config/admins/{uid} = true` no Realtime Database; para um
+gestor também manter a lista, acrescente o UID dele ali pelo console. A conta do ESP32 fica em
+`config/dispositivos/esfo01`.
+
+**Testar sem o hardware:** abra `claviculario-virtual.html` (no mesmo endereço do app) num computador
+e entre com a conta do claviculário. Ele faz o papel do ESP32, com os mesmos tempos e eventos. O login
+fica só naquela aba e não interfere no login do SisCautela.
+
 ## Publicar
 
 **App:** https://siscautelaesfo-commits.github.io/siscautela/
@@ -110,7 +152,8 @@ Qualquer alteração na pasta `public/` da branch `main` é publicada automatica
 GitHub Actions (`.github/workflows/pages.yml`), em cerca de 1 minuto.
 
 **Regras do banco:** não são publicadas automaticamente. Depois de alterar `firestore.rules`,
-copie o conteúdo para Console do Firebase → Firestore → Regras → Publicar.
+copie o conteúdo para Console do Firebase → Firestore → Regras → Publicar. O mesmo vale para
+`database.rules.json` em Realtime Database → Regras.
 
 O domínio `siscautelaesfo-commits.github.io` está autorizado em Authentication → Configurações →
 Domínios autorizados.
@@ -126,6 +169,6 @@ npm run test:regras
 
 ## Próximas etapas
 
-- Instalar a ponte do Drive na conta do sistema e preencher `URL_PONTE` (ver `ponte-drive/LEIAME.md`)
 - Completar placa e ano das viaturas e definir a ordem oficial de prioridade
 - Conferência diária do claviculário pelo conferente
+- Gravar o firmware no ESP32 e fazer os testes de bancada e integrados do claviculário

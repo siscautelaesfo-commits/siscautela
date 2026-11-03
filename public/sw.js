@@ -1,6 +1,6 @@
 // Service worker: guarda a "casca" do app para abrir rápido e funcionar com sinal fraco.
 // Os dados (login e banco) vêm do Firebase, que tem o próprio cache.
-const VERSAO = 'siscautela-v4';
+const VERSAO = 'siscautela-v5';
 const CASCA = [
   './',
   'index.html',
@@ -12,6 +12,7 @@ const CASCA = [
   'js/relatorios.js',
   'js/assinatura.js',
   'js/ponte.js',
+  'js/claviculario.js',
   'js/config.js',
   'js/firebase-config.js',
   'js/viaturas-iniciais.js',

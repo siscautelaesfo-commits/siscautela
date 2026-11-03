@@ -10,6 +10,7 @@ import {
 import { assinar } from './assinatura.js';
 import * as ponte from './ponte.js';
 import { abrirDetalheCautela } from './relatorios.js';
+import { acompanharAbertura, podeReabrir, instalado, ouvirStatus } from './claviculario.js';
 
 export const telasCautela = ['tela-retirada', 'tela-devolucao', 'tela-concluida', 'tela-minhas'];
 
@@ -20,11 +21,13 @@ let rascunho = null;         // cautela ou devolução sendo preenchida
 let ultima = null;           // última cautela/devolução registrada (tela de concluída)
 let iniciado = false;
 const pararOutros = [];
+let pararClav = null;
 
 /* ---------- ciclo de vida ---------- */
 export function iniciarCautelas() {
   ponte.configurar();
   acompanharMinha();
+  pararClav?.(); pararClav = ouvirStatus(() => { if (telaAtual() === 'tela-inicio') renderInicio(); });
   if (iniciado) return renderInicio();
   iniciado = true;
   pararOutros.push(ouvir('viaturas', () => {
@@ -95,10 +98,15 @@ function renderInicio() {
       ${atraso ? '<div class="alerta-caixa erro">A cautela está em atraso e o gestor é avisado. Devolva a viatura ou fale com o gestor.</div>' : ''}
       <button type="button" class="primario" data-c="devolver">Devolver viatura</button>
       <div class="linha"><button type="button" class="btn" data-c="abastecer">Registrar abastecimento</button>
-      <button type="button" class="btn leve" data-c="ver-minha">Ver cautela</button></div>
+      <button type="button" class="btn leve" data-c="ver-minha">Ver cautela</button>
+      ${podeReabrir(minha.saida) && instalado() ? `<button type="button" class="btn leve" data-c="abrir-clav">${ICONE.chave}Abrir claviculário</button>` : ''}</div>
     </section>`;
   } else {
     const disp = disponiveis();
+    if (ultima?.situacao === 'encerrada' && podeReabrir(ultima.devolucao) && instalado()) {
+      h += `<div class="caixa linha separa"><span>Ainda não guardou a chave da ${chaveiro({ prefixo: ultima.vtrPrefixo })}?</span>
+        <button type="button" class="btn" data-c="abrir-clav-dev">${ICONE.chave}Abrir claviculário</button></div>`;
+    }
     h += `<section class="pilha"><div><h2>Disponíveis para cautela (${disp.length})</h2>
       <p class="pequeno">Na ordem de prioridade: as mais antigas primeiro. Toque na viatura para cautelar; outra que não a primeira pede o motivo.</p></div>
       ${disp.length ? `<div class="vlista">${disp.map((v, i) => itemViatura(v, {
@@ -149,6 +157,8 @@ const ACOES = {
   'assinar-devolucao': () => assinarDevolucao(),
   inicio: () => { mostrar('tela-inicio'); renderInicio(); },
   'ver-ultima': () => ultima && abrirDetalheCautela(ultima),
+  'abrir-clav': () => minha && abrirClaviculario(minha.id, 'retirada', minha.vtrPrefixo),
+  'abrir-clav-dev': () => ultima && abrirClaviculario(ultima.id, 'devolucao', ultima.vtrPrefixo),
   'abrir-cautela': (d) => { const c = listaMinhas.find((x) => x.id === d.id); if (c) abrirDetalheCautela(c); },
 };
 function rerender() {
@@ -571,16 +581,27 @@ function telaConcluida(tipo, v) {
       <div class="linha" style="justify-content:center">${placa(v.placa)}<span class="suave">${esc(v.modelo || '')}</span></div>
       <p>A viatura e a chave estão em seu nome até a devolução. Volta prevista para ${dataHora(c.previsao)}.</p>
       ${!ponte.ponteLigada() ? '<p class="pequeno">As fotos ficaram guardadas no celular e sobem para o Drive assim que o envio for ligado.</p>' : '<p class="pequeno">As fotos estão subindo para o Drive em segundo plano; pode guardar o celular.</p>'}
+      <div id="clav-abertura" class="clav-lugar"></div>
       <div class="linha" style="justify-content:center"><button type="button" class="btn" data-c="ver-ultima">Ver cautela</button><button type="button" class="btn prim" data-c="inicio">Ir para o início</button></div>
     </section>` : `
     <section class="caixa concluido">
       <div class="digital ok">${ICONE.ok}</div>
       <h1 style="margin:0">Devolução registrada</h1>
-      <p>Devolva a chave da ${chaveiro(v)} no claviculário.</p>
+      <p>Agora guarde a chave da ${chaveiro(v)} no claviculário.</p>
+      <div id="clav-abertura" class="clav-lugar"></div>
       <dl class="kv" style="text-align:left"><dt>Rodou</dt><dd>${km(c.kmRetorno - c.kmSaida)} km</dd><dt>Duração</dt><dd>${duracao(ms(c.devolucao) - ms(c.saida))}</dd><dt>Combustível</dt><dd>${combMini(c.combRetorno)}</dd></dl>
       <div class="linha" style="justify-content:center"><button type="button" class="btn" data-c="ver-ultima">Ver cautela e termo</button><button type="button" class="btn prim" data-c="inicio">Ir para o início</button></div>
     </section>`;
   mostrar('tela-concluida');
+  acompanharAbertura($('#clav-abertura'), { cautelaId: c.id, tipo, prefixo: v.prefixo, tela: 'tela-concluida' });
+}
+
+// Pedir a abertura de novo (porta que não abriu a tempo, app fechado antes de pegar a chave)
+function abrirClaviculario(cautelaId, tipo, prefixo) {
+  let acomp = null;
+  const m = abrirModal(`<div id="clav-modal"></div>
+    <div class="linha separa"><span></span><button type="button" class="btn" data-fechar-modal>Fechar</button></div>`, () => acomp?.parar());
+  acomp = acompanharAbertura(m.querySelector('#clav-modal'), { cautelaId, tipo, prefixo });
 }
 
 /* ---------- abastecimento durante a cautela ---------- */

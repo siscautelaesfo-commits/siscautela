@@ -12,6 +12,7 @@ import {
   auth, db, estado, avisar, $, mostrar, telaAtual, mensagem, traduzirErro, ehGestao, acompanha, SITUACOES, posto
 } from './nucleo.js';
 import { iniciarCautelas, pararCautelas, telasCautela } from './cautela.js';
+import { sincronizarMembros, pararClaviculario } from './claviculario.js';
 import { iniciarPainel, pararPainel, telasPainel } from './painel.js';
 
 const PERFIS = {
@@ -94,6 +95,7 @@ function pararTudo() {
   pararViaturas?.(); pararViaturas = null;
   pararCautelas();
   pararPainel();
+  pararClaviculario();
   eu = null; usuarios = []; viaturas = [];
   estado.eu = null; estado.viaturas = [];
 }
@@ -297,6 +299,7 @@ $('#busca-usuarios').addEventListener('input', renderizarLista);
 function iniciarGestao() {
   pararColecao = onSnapshot(collection(db, 'usuarios'), (snap) => {
     usuarios = snap.docs.map((d) => ({ uid: d.id, ...d.data() }));
+    sincronizarMembros(usuarios);   // quem está ativo pode abrir o claviculário
     atualizarContagens();
     if (telaAtual() === 'tela-gestao') renderizarLista();
   }, (err) => {

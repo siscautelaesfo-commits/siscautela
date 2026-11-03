@@ -274,7 +274,7 @@ button.vitem:hover { border-color: var(--azul); }
 .alerta:first-of-type { border-top: 0; }
 .alerta > div { min-width: 0; }
 .ponto { width: 10px; height: 10px; border-radius: 50%; }
-.ponto.erro { background: var(--erro); } .ponto.atencao { background: var(--atencao); } .ponto.info { background: var(--azul); }
+.ponto.erro { background: var(--erro); } .ponto.atencao { background: var(--atencao); } .ponto.info { background: var(--azul); } .ponto.ok { background: var(--ok); }
 
 .tabela { overflow-x: auto; background: var(--cartao); border: 1px solid var(--borda); border-radius: var(--raio); }
 table { border-collapse: collapse; width: 100%; font-size: .92rem; }
@@ -321,3 +321,19 @@ tr.clica:hover td { background: var(--cartao-2); }
   box-shadow: 0 6px 20px rgba(0,0,0,.2); z-index: 30;
 }
 .mensagem.erro { background: var(--erro); border-left-color: #fff; }
+
+/* ---------- claviculário ---------- */
+.clav-lugar { width: 100%; text-align: left; }
+.clav { border-left: 4px solid var(--azul); }
+.clav.clav-ok { border-left-color: var(--ok); }
+.clav.clav-atencao { border-left-color: var(--atencao); }
+.clav.clav-erro { border-left-color: var(--erro); }
+.clav p { margin: 0; }
+.clav-icone { width: 40px; height: 40px; flex: none; border-radius: 50%; display: grid; place-items: center; background: var(--cartao-2); color: var(--azul); }
+.clav-ok .clav-icone { color: var(--ok); background: var(--ok-fundo); }
+.clav-erro .clav-icone { color: var(--erro); background: var(--erro-fundo); }
+.clav-atencao .clav-icone { color: var(--atencao); background: var(--atencao-fundo); }
+.clav-icone svg { width: 22px; height: 22px; }
+.clav-icone.girando { animation: clav-pulso 1.2s ease-in-out infinite; }
+@keyframes clav-pulso { 50% { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .clav-icone.girando { animation: none; } }

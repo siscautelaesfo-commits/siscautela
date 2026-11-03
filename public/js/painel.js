@@ -11,6 +11,7 @@ import {
 import { abrirDetalheCautela, renderRelatorios, relatorioDeHoje, invalidarRelatorios } from './relatorios.js';
 import { assinar } from './assinatura.js';
 import { gravarDevolucao } from './cautela.js';
+import { ouvirStatus, ouvirEventos, htmlQuadroClaviculario, alertasClaviculario } from './claviculario.js';
 
 export const telasPainel = ['tela-painel'];
 
@@ -39,6 +40,7 @@ export function iniciarPainel() {
     pendentes = s.size; atualizar();
   }, (e) => console.error(e)));
   parar.push(ouvir('viaturas', atualizar));
+  parar.push(ouvirStatus(() => atualizar()), ouvirEventos(() => atualizar()));
   parar.push(ouvir('encerrar-cautela', encerrarPelaGestao));
   const t = setInterval(() => { if (telaAtual() === 'tela-painel' && guia !== 'relatorios' && !$('#modal').firstChild) render(); }, 30000);
   parar.push(() => clearInterval(t));
@@ -52,6 +54,7 @@ export function pararPainel() {
 document.getElementById('cartao-painel')?.addEventListener('click', () => { guia = 'painel'; render(); mostrar('tela-painel'); });
 
 const cautelaDa = (vtrId) => abertas.find((c) => c.vtrId === vtrId);
+const nomeDe = (uid) => (abertas.find((c) => c.userId === uid) || recentes?.find((c) => c.userId === uid))?.userNome || '';
 
 function atualizar() {
   const atrasos = abertas.filter((c) => estaAtrasada(c)).length;
@@ -99,6 +102,7 @@ function htmlPainel() {
   abertas.filter((c) => estaAtrasada(c)).forEach((c) => alertas.push(['erro', `Cautela em atraso: VTR ${c.vtrPrefixo}`, `${c.userNome} · previsão ${dataHora(c.previsao)} (${duracao(Date.now() - ms(c.previsao))} atrás)`, `data-p="cautela" data-id="${c.id}"`, 'Ver']));
   abertas.filter((c) => c.divergenciaKm != null).forEach((c) => alertas.push(['atencao', `KM divergente na VTR ${c.vtrPrefixo}`, `Saída com ${km(c.kmSaida)} km; último registro com ${km(c.divergenciaKm)} km`, `data-p="cautela" data-id="${c.id}"`, 'Ver']));
   avarias.filter((a) => a.situacao === 'aberta').forEach((a) => alertas.push([a.gravidade === 'grave' ? 'erro' : 'atencao', `Avaria ${a.gravidade} na VTR ${a.vtrPrefixo}`, a.descricao, 'data-p="guia" data-g="avarias"', 'Tratar']));
+  alertasClaviculario().forEach(([g, t, s]) => alertas.push([g, t, s, '', '']));
   if (pendentes && ehGestao()) alertas.push(['info', `${pendentes} cadastro${pendentes > 1 ? 's' : ''} aguardando aprovação`, 'Autocadastro feito pelo próprio militar', 'data-p="usuarios"', 'Ver']);
   return `<div class="quadros">
       <div class="quadro q-ok"><b>${n('disponivel')}</b><span>Disponíveis</span></div>
@@ -115,7 +119,8 @@ function htmlPainel() {
         return c ? `<button type="button" class="vitem" data-p="cautela" data-id="${c.id}">${dentro}</button>` : `<div class="vitem">${dentro}</div>`;
       }).join('')}</div></section>
       <section class="pilha">
-        <div class="caixa"><h3 style="margin-bottom:6px">Alertas</h3>${alertas.length ? alertas.map(([g, t, s, a, b]) => `<div class="alerta"><span class="ponto ${g}"></span><div><b>${esc(t)}</b><div class="pequeno suave">${esc(s)}</div></div><button type="button" class="btn peq" ${a}>${b}</button></div>`).join('') : '<p>Nenhum alerta agora.</p>'}</div>
+        <div class="caixa"><h3 style="margin-bottom:6px">Alertas</h3>${alertas.length ? alertas.map(([g, t, s, a, b]) => `<div class="alerta"><span class="ponto ${g}"></span><div><b>${esc(t)}</b><div class="pequeno suave">${esc(s)}</div></div>${b ? `<button type="button" class="btn peq" ${a}>${b}</button>` : '<span></span>'}</div>`).join('') : '<p>Nenhum alerta agora.</p>'}</div>
+        ${htmlQuadroClaviculario(nomeDe)}
         <div class="caixa pilha"><h3>Relatório do dia</h3><p class="pequeno">Cautelas de hoje, viaturas fora e ocorrências, para a passagem de serviço.</p>
           <div class="linha"><button type="button" class="btn prim" data-p="hoje-pdf">${ICONE.pdf}Baixar PDF de hoje</button><button type="button" class="btn" data-p="hoje-compartilhar">${ICONE.compartilhar}Compartilhar</button></div></div>
       </section>

@@ -1,0 +1,33 @@
+{
+  "rules": {
+    "config": {
+      ".read": "auth != null",
+      ".write": false
+    },
+    "membros": {
+      ".read": "auth != null",
+      "$uid": {
+        ".write": "auth != null && root.child('config/admins/' + auth.uid).val() === true"
+      }
+    },
+    "claviculario": {
+      "$dev": {
+        "comando": {
+          ".read": "auth != null && auth.uid === root.child('config/dispositivos/' + $dev).val()",
+          ".write": "auth != null && root.child('membros/' + auth.uid).val() === true",
+          ".validate": "newData.hasChildren(['id', 'uid', 'cautelaId', 'tipo', 'criadoEm']) && newData.child('uid').val() === auth.uid"
+        },
+        "status": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === root.child('config/dispositivos/' + $dev).val()"
+        },
+        "eventos": {
+          ".read": "auth != null && (root.child('membros/' + auth.uid).val() === true || auth.uid === root.child('config/dispositivos/' + $dev).val())",
+          "$e": {
+            ".write": "auth != null && auth.uid === root.child('config/dispositivos/' + $dev).val() && !data.exists()"
+          }
+        }
+      }
+    }
+  }
+}
