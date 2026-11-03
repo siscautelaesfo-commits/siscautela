@@ -225,8 +225,7 @@ function comprimir(arquivo) {
   });
 }
 function blocoFoto(chave, rotulo, foto, grupo) {
-  // Sem "capture": o celular oferece tirar a foto na hora ou escolher uma da galeria/arquivos
-  const input = `<input type="file" accept="image/*" data-foto="${chave}" data-grupo="${grupo}" aria-label="Fotografar ou escolher foto: ${esc(rotulo)}">`;
+  const input = `<input type="file" accept="image/*" capture="environment" data-foto="${chave}" data-grupo="${grupo}" aria-label="Fotografar: ${esc(rotulo)}">`;
   if (foto?.url) return `<div class="foto tem"><img src="${foto.url}" alt="${esc(rotulo)}"><span class="leg">${esc(rotulo)}</span>${input}</div>`;
   return `<label class="foto">${ICONE.camera}${esc(rotulo)}${input}</label>`;
 }
