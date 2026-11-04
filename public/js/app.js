@@ -13,6 +13,7 @@ import {
 } from './nucleo.js';
 import { iniciarCautelas, pararCautelas, telasCautela } from './cautela.js';
 import { sincronizarMembros, pararClaviculario } from './claviculario.js';
+import { iniciarReservas, pararReservas, telasReserva } from './reservas.js';
 import { iniciarPainel, pararPainel, telasPainel } from './painel.js';
 
 const PERFIS = {
@@ -116,6 +117,7 @@ function pararTudo() {
   pararCautelas();
   pararPainel();
   pararClaviculario();
+  pararReservas();
   eu = null; usuarios = []; viaturas = [];
   estado.eu = null; estado.viaturas = [];
 }
@@ -158,7 +160,7 @@ function rotear(user) {
     }
     montarInicio();
     avisar('eu', eu);
-    const telasLogado = ['tela-inicio', 'tela-gestao', 'tela-viaturas', 'tela-viatura-form', ...telasCautela, ...telasPainel];
+    const telasLogado = ['tela-inicio', 'tela-gestao', 'tela-viaturas', 'tela-viatura-form', ...telasCautela, ...telasPainel, ...telasReserva];
     if (!telasLogado.includes(telaAtual())) mostrar('tela-inicio');
     if (['tela-gestao', 'tela-viatura-form'].includes(telaAtual()) && !ehGestao()) mostrar('tela-inicio');
     if (telasPainel.includes(telaAtual()) && !acompanha()) mostrar('tela-inicio');
@@ -190,6 +192,7 @@ function montarInicio() {
   if (ehGestao() && !pararColecao) iniciarGestao();
   if (!ehGestao() && pararColecao) { pararColecao(); pararColecao = null; }
   if (!pararViaturas) iniciarViaturas();
+  iniciarReservas();
   iniciarCautelas();
   if (acompanha()) iniciarPainel(); else pararPainel();
 }

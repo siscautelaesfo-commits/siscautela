@@ -180,7 +180,6 @@ test('prefixo não muda e viatura não é apagada', async () => {
 });
 
 // ---- cautela e devolução (versão 0.4) ----
-import { writeBatch, Timestamp } from 'firebase/firestore';
 
 const emHoras = (h) => Timestamp.fromMillis(Date.now() + h * 3600e3);
 
@@ -285,4 +284,55 @@ test('ninguém apaga cautela', async () => {
   await prepararViatura();
   await cautelar(user(), 'uid-user');
   await assertFails(deleteDoc(doc(admin(), 'cautelas', 'c1')));
+});
+
+// ---- reservas ----
+
+const MEIA = 1800000;
+const daqui = (h) => Math.ceil((Date.now() + h * 3600e3) / MEIA) * MEIA;
+async function viaturaAtiva() {
+  await env.withSecurityRulesDisabled(async (c) => {
+    await setDoc(doc(c.firestore(), 'viaturas', 'vtr-1'), { prefixo: '1', situacao: 'ativa', prioridade: 1 });
+  });
+}
+function lote(db, uid, nome, ini, fim, id = 'r-' + uid + '-' + ini) {
+  const b = writeBatch(db);
+  b.set(doc(db, 'reservas', id), { vtrId: 'vtr-1', vtrPrefixo: '1', userId: uid, userNome: nome, missao: 'Teste',
+    inicio: Timestamp.fromMillis(ini), fim: Timestamp.fromMillis(fim), situacao: 'ativa', criadaEm: serverTimestamp() });
+  for (let t = ini; t < fim; t += MEIA) {
+    b.set(doc(db, 'reservaBlocos', 'vtr-1_' + t), { vtrId: 'vtr-1', t: Timestamp.fromMillis(t), reservaId: id, userId: uid, liberaEm: Timestamp.fromMillis(ini + MEIA) });
+  }
+  return b;
+}
+
+test('reserva com os blocos de 30 min é aceita; horário já reservado é recusado', async () => {
+  await viaturaAtiva();
+  const ini = daqui(3), fim = ini + 4 * MEIA;
+  await assertSucceeds(lote(user(), 'uid-user', 'Cad. User', ini, fim).commit());
+  await assertFails(lote(gestor(), 'uid-gestor', 'Cad. Gestor', ini + MEIA, fim + MEIA).commit());
+  await assertSucceeds(lote(gestor(), 'uid-gestor', 'Cad. Gestor', fim, fim + 2 * MEIA).commit());
+});
+
+test('reserva fora da meia hora, longa demais ou sem o primeiro bloco é recusada', async () => {
+  await viaturaAtiva();
+  const ini = daqui(3);
+  await assertFails(lote(user(), 'uid-user', 'Cad. User', ini + 60000, ini + 4 * MEIA).commit());
+  await assertFails(lote(user(), 'uid-user', 'Cad. User', ini, ini + 50 * MEIA).commit());
+  await assertFails(setDoc(doc(user(), 'reservas', 'sozinha'), { vtrId: 'vtr-1', vtrPrefixo: '1', userId: 'uid-user', userNome: 'Cad. User',
+    missao: 'Teste', inicio: Timestamp.fromMillis(ini), fim: Timestamp.fromMillis(ini + MEIA), situacao: 'ativa', criadaEm: serverTimestamp() }));
+});
+
+test('quem reservou cancela e solta o horário; outro usuário não cancela; gestão cancela com motivo', async () => {
+  await viaturaAtiva();
+  const ini = daqui(3), fim = ini + 2 * MEIA, id = 'r-uid-user-' + ini;
+  await lote(user(), 'uid-user', 'Cad. User', ini, fim).commit();
+  await assertFails(updateDoc(doc(gestor(), 'reservas', id), { situacao: 'cancelada', canceladaPor: 'uid-gestor', canceladaEm: serverTimestamp() }));
+  await assertSucceeds(updateDoc(doc(gestor(), 'reservas', id), { situacao: 'cancelada', canceladaPor: 'uid-gestor', canceladaEm: serverTimestamp(), motivoCancelamento: 'Missão do comando' }));
+  const ini2 = daqui(6), id2 = 'r-uid-user-' + ini2;
+  await lote(user(), 'uid-user', 'Cad. User', ini2, ini2 + MEIA).commit();
+  const b = writeBatch(user());
+  b.update(doc(user(), 'reservas', id2), { situacao: 'cancelada', canceladaPor: 'uid-user', canceladaEm: serverTimestamp() });
+  b.update(doc(user(), 'reservaBlocos', 'vtr-1_' + ini2), { liberaEm: serverTimestamp() });
+  await assertSucceeds(b.commit());
+  await assertSucceeds(lote(gestor(), 'uid-gestor', 'Cad. Gestor', ini2, ini2 + MEIA).commit());
 });

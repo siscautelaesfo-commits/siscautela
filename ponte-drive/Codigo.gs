@@ -30,7 +30,9 @@ const CFG = {
   HORA_RELATORIO_DIA: 19,
   HORA_TERMOS_PENDENTES: 22,
   COPIAS_GUARDADAS: 26,              // cópias semanais do banco: cerca de 6 meses
-  COLECOES: ['viaturas', 'usuarios', 'cautelas', 'avarias', 'abastecimentos', 'log'],
+  COLECOES: ['viaturas', 'usuarios', 'cautelas', 'avarias', 'abastecimentos', 'reservas', 'log'],
+  RESERVA_TOLERANCIA_MIN: 30,        // reserva não retirada 30 min depois do início cai (não comparecimento)
+  RESERVA_FOLGA_MIN: 30,             // quem está com a viatura devolve até 30 min antes da reserva
   PERFIS_GESTAO: ['admin', 'gestor'],
 };
 
@@ -65,6 +67,7 @@ const ACOES_ = {
   arquivo: acaoArquivo_,
   gerarTermo: acaoGerarTermo_,
   salvarRelatorio: acaoSalvarRelatorio_,
+  liberarReserva: acaoLiberarReserva_,
 };
 
 function doPost(e) {
@@ -306,6 +309,26 @@ function acaoSalvarRelatorio_(u, req) {
  * Termo de cautela (PDF)
  * ========================================================================= */
 
+// Gestão cancelou uma reserva: solta os horários (blocos) e avisa quem tinha reservado
+function acaoLiberarReserva_(u, req) {
+  exigirGestao_(u);
+  validarId_(req.id, 'reserva');
+  const r = lerDoc_('reservas/' + req.id);
+  if (!r) throw erro_('nao_encontrado', 'Reserva não encontrada.');
+  if (r.situacao !== 'cancelada') throw erro_('reserva_ativa', 'A reserva não está cancelada.');
+  liberarBlocos_(r);
+  if (!r.avisoCancelamento) {
+    const dono = lerDoc_('usuarios/' + r.userId) || {};
+    if (dono.email) {
+      enviarEmail_([dono.email], '[SisCautela] Sua reserva da VTR ' + r.vtrPrefixo + ' foi cancelada',
+        '<p>A gestão cancelou a sua reserva da VTR ' + esc_(r.vtrPrefixo) + ' (' + esc_(periodoReserva_(r)) + ').</p>' +
+        '<p>Motivo: ' + esc_(r.motivoCancelamento || '—') + '</p><p>Se ainda precisar de viatura, faça uma nova reserva no app.</p>');
+    }
+    atualizarDoc_('reservas/' + r._id, { avisoCancelamento: new Date(), blocosLiberados: true });
+  }
+  return {};
+}
+
 function fotosFaltando_(c) {
   const falta = [];
   ['retirada', 'devolucao'].forEach(function (m) {
@@ -392,6 +415,7 @@ function gradeFotos_(mapa) {
 
 // A cada 30 min: cautela que passou da previsão + 30 min avisa o gestor e o cadete, uma vez só
 function verificarAtrasos() {
+  try { verificarReservas_(); } catch (err) { console.error('Reservas: ' + (err && err.stack)); }
   const agora = Date.now();
   const abertas = consultar_('cautelas', [['situacao', 'EQUAL', 'aberta']]);
   abertas.filter(function (c) {
@@ -411,8 +435,75 @@ function verificarAtrasos() {
   });
 }
 
+/* ---------- reservas ---------- */
+function periodoReserva_(r) {
+  return dataHora_(r.inicio) + ' até ' + (dataCurta_(r.inicio) === dataCurta_(r.fim) ? hora_(r.fim) : dataHora_(r.fim));
+}
+
+// Solta os blocos de 30 min de uma reserva cancelada, para outra pessoa poder reservar o horário
+function liberarBlocos_(r) {
+  const agora = new Date();
+  for (let t = r.inicio; t < r.fim; t += 1800000) {
+    if (t + 1800000 < agora.getTime()) continue;
+    const caminho = 'reservaBlocos/' + r.vtrId + '_' + t;
+    const b = lerDoc_(caminho);
+    if (b && b.reservaId === r._id && b.liberaEm > agora.getTime()) atualizarDoc_(caminho, { liberaEm: agora });
+  }
+}
+
+// A cada 30 min: não comparecimento, viatura ainda fora perto da reserva e cancelamentos pendentes
+function verificarReservas_() {
+  const agora = Date.now();
+  const tol = CFG.RESERVA_TOLERANCIA_MIN * 60e3, folga = CFG.RESERVA_FOLGA_MIN * 60e3;
+  consultar_('reservas', [['situacao', 'EQUAL', 'ativa']]).forEach(function (r) {
+    if (!r.cautelaId && agora > r.inicio + tol) {
+      atualizarDoc_('reservas/' + r._id, { situacao: 'expirada', expiradaEm: new Date() });
+      return;
+    }
+    // Faltando 30 min (ou menos) e a viatura ainda está com outra pessoa
+    if (!r.avisoViaturaFora && agora >= r.inicio - folga - 5 * 60e3 && agora <= r.inicio + tol) {
+      const v = lerDoc_('viaturas/' + r.vtrId);
+      const c = v && v.cautelaAtual ? lerDoc_('cautelas/' + v.cautelaAtual) : null;
+      if (c && c.situacao === 'aberta' && c.userId !== r.userId) {
+        const quem = lerDoc_('usuarios/' + c.userId) || {}, dono = lerDoc_('usuarios/' + r.userId) || {};
+        const texto = 'A VTR ' + r.vtrPrefixo + ' está reservada para ' + nomeDe_(dono) + ' a partir de ' + dataHora_(r.inicio) +
+          ', mas continua com ' + nomeDe_(quem) + ' (volta prevista ' + dataHora_(c.previsao) + ').' + (quem.telefone ? ' Contato: ' + quem.telefone + '.' : '');
+        enviarEmail_(gestores_(), '[SisCautela] VTR ' + r.vtrPrefixo + ' ainda não voltou para a reserva', '<p>' + esc_(texto) + '</p>');
+        if (dono.email) enviarEmail_([dono.email], '[SisCautela] A VTR ' + r.vtrPrefixo + ' da sua reserva ainda não voltou', '<p>' + esc_(texto) + '</p><p>A gestão foi avisada. Assim que ela voltar, fica guardada para você.</p>');
+        if (quem.email) enviarEmail_([quem.email], '[SisCautela] Devolva a VTR ' + r.vtrPrefixo + ': ela está reservada', '<p>A VTR ' + esc_(r.vtrPrefixo) + ' está reservada a partir de ' + esc_(dataHora_(r.inicio)) + '. Devolva a viatura e registre a devolução no app.</p>');
+        atualizarDoc_('reservas/' + r._id, { avisoViaturaFora: new Date() });
+      }
+    }
+  });
+  // Rede de segurança: canceladas pela gestão cujos horários não foram soltos na hora
+  consultar_('reservas', [['situacao', 'EQUAL', 'cancelada']]).filter(function (r) {
+    return r.fim > agora && !r.blocosLiberados;
+  }).forEach(function (r) {
+    liberarBlocos_(r);
+    atualizarDoc_('reservas/' + r._id, { blocosLiberados: true });
+  });
+}
+
+// Lembrete na véspera, junto com o relatório do dia (19 h)
+function lembrarReservas_() {
+  const amanha = inicioDoDia_(new Date()) + 86400e3;
+  consultar_('reservas', [['situacao', 'EQUAL', 'ativa']]).filter(function (r) {
+    return r.inicio >= amanha && r.inicio < amanha + 86400e3 && !r.lembrete;
+  }).forEach(function (r) {
+    const dono = lerDoc_('usuarios/' + r.userId) || {};
+    if (dono.email) {
+      enviarEmail_([dono.email], '[SisCautela] Lembrete: VTR ' + r.vtrPrefixo + ' amanhã às ' + hora_(r.inicio),
+        '<p>Você reservou a VTR ' + esc_(r.vtrPrefixo) + ' para ' + esc_(periodoReserva_(r)) + ' · ' + esc_(r.missao || '') + '.</p>' +
+        '<p>A partir de 1 h antes do início, a viatura fica guardada para você. Se não retirar até ' + CFG.RESERVA_TOLERANCIA_MIN +
+        ' min depois do início, a reserva cai. Se não for usar, cancele no app para liberar o horário.</p>');
+    }
+    atualizarDoc_('reservas/' + r._id, { lembrete: new Date() });
+  });
+}
+
 // Fim do expediente: relatório do dia em PDF no Drive e por e-mail aos gestores
 function relatorioDiario() {
+  try { lembrarReservas_(); } catch (err) { console.error('Lembrete de reservas: ' + (err && err.stack)); }
   const hoje = inicioDoDia_(new Date());
   const r = montarRelatorioDia_(hoje);
   if (r.vazio && [0, 6].indexOf(new Date(hoje).getDay()) >= 0) return; // fim de semana sem movimento: sem relatório

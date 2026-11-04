@@ -12,6 +12,7 @@ import { abrirDetalheCautela, renderRelatorios, relatorioDeHoje, invalidarRelato
 import { assinar } from './assinatura.js';
 import { gravarDevolucao } from './cautela.js';
 import { ouvirStatus, ouvirEventos, htmlQuadroClaviculario, alertasClaviculario } from './claviculario.js';
+import { htmlAgenda } from './reservas.js';
 
 export const telasPainel = ['tela-painel'];
 
@@ -40,6 +41,7 @@ export function iniciarPainel() {
     pendentes = s.size; atualizar();
   }, (e) => console.error(e)));
   parar.push(ouvir('viaturas', atualizar));
+  parar.push(ouvir('reservas', atualizar));
   parar.push(ouvirStatus(() => atualizar()), ouvirEventos(() => atualizar()));
   parar.push(ouvir('encerrar-cautela', encerrarPelaGestao));
   const t = setInterval(() => { if (telaAtual() === 'tela-painel' && guia !== 'relatorios' && !$('#modal').firstChild) render(); }, 30000);
@@ -120,6 +122,7 @@ function htmlPainel() {
       }).join('')}</div></section>
       <section class="pilha">
         <div class="caixa"><h3 style="margin-bottom:6px">Alertas</h3>${alertas.length ? alertas.map(([g, t, s, a, b]) => `<div class="alerta"><span class="ponto ${g}"></span><div><b>${esc(t)}</b><div class="pequeno suave">${esc(s)}</div></div>${b ? `<button type="button" class="btn peq" ${a}>${b}</button>` : '<span></span>'}</div>`).join('') : '<p>Nenhum alerta agora.</p>'}</div>
+        ${htmlAgenda()}
         ${htmlQuadroClaviculario(nomeDe)}
         <div class="caixa pilha"><h3>Relatório do dia</h3><p class="pequeno">Cautelas de hoje, viaturas fora e ocorrências, para a passagem de serviço.</p>
           <div class="linha"><button type="button" class="btn prim" data-p="hoje-pdf">${ICONE.pdf}Baixar PDF de hoje</button><button type="button" class="btn" data-p="hoje-compartilhar">${ICONE.compartilhar}Compartilhar</button></div></div>

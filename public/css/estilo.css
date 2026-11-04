@@ -337,3 +337,7 @@ tr.clica:hover td { background: var(--cartao-2); }
 .clav-icone.girando { animation: clav-pulso 1.2s ease-in-out infinite; }
 @keyframes clav-pulso { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .clav-icone.girando { animation: none; } }
+
+/* ---------- reservas ---------- */
+.duas-colunas { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.reserva-aviso { font-size: .82rem; color: var(--atencao); font-weight: 600; }

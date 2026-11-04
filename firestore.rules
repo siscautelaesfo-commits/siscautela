@@ -277,6 +277,85 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // ---------- reservas ----------
+    // Reserva de viatura para uma missão futura, em blocos de 30 min (até 24 h, até 15 dias antes).
+    // O que impede duas reservas no mesmo horário são os blocos: cada bloco de 30 min de cada
+    // viatura é um documento único (reservaBlocos/{vtrId}_{ms}); quem chega depois não grava.
+    function meiaHora(t) {
+      return t is timestamp && t.toMillis() % 1800000 == 0;
+    }
+    function caminhoBloco(vtrId, t) {
+      return /databases/$(database)/documents/reservaBlocos/$(vtrId + '_' + string(t.toMillis()));
+    }
+    match /reservas/{id} {
+      allow read: if ativo();
+
+      allow create: if ativo()
+        && request.resource.data.keys().hasOnly(['vtrId', 'vtrPrefixo', 'userId', 'userNome', 'missao',
+             'inicio', 'fim', 'situacao', 'criadaEm'])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.situacao == 'ativa'
+        && request.resource.data.criadaEm == request.time
+        && texto(request.resource.data.userNome, 2, 60)
+        && texto(request.resource.data.missao, 3, 150)
+        && meiaHora(request.resource.data.inicio) && meiaHora(request.resource.data.fim)
+        && request.resource.data.inicio > request.time - duration.value(30, 'm')
+        && request.resource.data.inicio < request.time + duration.value(15, 'd')
+        && request.resource.data.fim > request.resource.data.inicio
+        && request.resource.data.fim <= request.resource.data.inicio + duration.value(24, 'h')
+        && get(caminhoViatura(request.resource.data.vtrId)).data.situacao == 'ativa'
+        && get(caminhoViatura(request.resource.data.vtrId)).data.prefixo == request.resource.data.vtrPrefixo
+        // o primeiro bloco é gravado junto e aponta para esta reserva
+        && getAfter(caminhoBloco(request.resource.data.vtrId, request.resource.data.inicio)).data.reservaId == id;
+
+      // Quem reservou: cancela, ou marca como cumprida ao retirar a viatura pela reserva.
+      allow update: if ativo()
+        && resource.data.userId == request.auth.uid
+        && resource.data.situacao == 'ativa'
+        && ((mudou().hasOnly(['situacao', 'canceladaPor', 'canceladaEm'])
+             && request.resource.data.situacao == 'cancelada'
+             && request.resource.data.canceladaPor == request.auth.uid
+             && request.resource.data.canceladaEm == request.time)
+          || (mudou().hasOnly(['situacao', 'cautelaId'])
+             && request.resource.data.situacao == 'cumprida'
+             && get(caminhoCautela(request.resource.data.cautelaId)).data.userId == request.auth.uid
+             && get(caminhoCautela(request.resource.data.cautelaId)).data.vtrId == resource.data.vtrId));
+
+      // Gestão: cancela qualquer reserva, com justificativa (missão prioritária, viatura em manutenção...).
+      allow update: if gestao()
+        && resource.data.situacao == 'ativa'
+        && mudou().hasOnly(['situacao', 'canceladaPor', 'canceladaEm', 'motivoCancelamento'])
+        && request.resource.data.situacao == 'cancelada'
+        && request.resource.data.canceladaPor == request.auth.uid
+        && request.resource.data.canceladaEm == request.time
+        && texto(request.resource.data.motivoCancelamento, 5, 200);
+
+      allow delete: if false;
+    }
+
+    // Bloco de 30 min: fica preso até "liberaEm" (início da reserva + 30 min de tolerância).
+    // Depois disso, ou se quem reservou cancelar, o bloco pode ser usado por outra reserva.
+    match /reservaBlocos/{id} {
+      function blocoValido(d) {
+        return d.keys().hasOnly(['vtrId', 't', 'reservaId', 'userId', 'liberaEm'])
+          && d.userId == request.auth.uid
+          && d.vtrId is string && d.reservaId is string
+          && meiaHora(d.t)
+          && id == d.vtrId + '_' + string(d.t.toMillis())
+          && d.t > request.time - duration.value(30, 'm')
+          && d.t < request.time + duration.value(16, 'd')
+          && d.liberaEm is timestamp && d.liberaEm <= d.t + duration.value(24, 'h');
+      }
+      allow read: if emailConfirmado();
+      allow create: if emailConfirmado() && blocoValido(request.resource.data);
+      allow update: if emailConfirmado()
+        && ((resource.data.liberaEm < request.time && blocoValido(request.resource.data))
+          || (resource.data.userId == request.auth.uid
+              && mudou().hasOnly(['liberaEm'])
+              && request.resource.data.liberaEm == request.time));
+      allow delete: if false;
+    }
+
     // ---------- avarias ----------
     match /avarias/{id} {
       allow read: if ativo() && (resource.data.registradaPor == request.auth.uid || acompanha());

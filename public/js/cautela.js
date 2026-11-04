@@ -11,6 +11,7 @@ import { assinar } from './assinatura.js';
 import * as ponte from './ponte.js';
 import { abrirDetalheCautela } from './relatorios.js';
 import { acompanharAbertura, podeReabrir, instalado, ouvirStatus } from './claviculario.js';
+import { bloqueadaParaMim, limiteDevolucao, minhaReservaAgora, htmlMinhasReservas, marcarCumprida, quando } from './reservas.js';
 
 export const telasCautela = ['tela-retirada', 'tela-devolucao', 'tela-concluida', 'tela-minhas'];
 
@@ -35,6 +36,10 @@ export function iniciarCautelas() {
     if (telaAtual() === 'tela-retirada' && rascunho?.passo === 1) renderRetirada();
   }));
   pararOutros.push(ouvir('eu', acompanharMinha));
+  pararOutros.push(ouvir('reservas', () => {
+    if (telaAtual() === 'tela-inicio' && !rascunho) renderInicio();
+    if (telaAtual() === 'tela-retirada' && rascunho?.passo === 1) renderRetirada();
+  }));
   pararOutros.push(ponte.ouvirFila(mostrarFila));
   pararOutros.push(ponte.ouvirEnvios(aoEnviarFoto));
   setInterval(() => { if (telaAtual() === 'tela-inicio' && !rascunho) renderInicio(); }, 30000);
@@ -79,11 +84,43 @@ async function aoEnviarFoto(item) {
   ponte.pedirTermo(item.ref).catch(() => termosPedidos.delete(item.ref));
 }
 
+// Disponíveis para mim: sem as viaturas reservadas por outra pessoa a partir de 1 h antes do início
+const dispParaMim = () => disponiveis().filter((v) => !bloqueadaParaMim(v.id));
+
+// Aviso de reserva na lista de viaturas
+function notaReserva(v) {
+  const b = bloqueadaParaMim(v.id);
+  if (b) return { bloqueio: b, texto: `Reservada para ${esc(b.userNome)} ${esc(quando(b.inicio))}` };
+  const lim = limiteDevolucao(v.id);
+  if (lim && ms(lim.reserva.inicio) - Date.now() < 24 * 3600e3) {
+    return { texto: `<span class="reserva-aviso">Reservada ${esc(quando(lim.reserva.inicio))}: devolver até ${hora(lim.ate)}</span>` };
+  }
+  return null;
+}
+
+// Minha reserva que já pode ser retirada
+function htmlMinhaReservaAgora() {
+  const res = minhaReservaAgora();
+  if (!res) return '';
+  const v = estado.viaturas.find((x) => x.id === res.vtrId) || { prefixo: res.vtrPrefixo, modelo: '' };
+  const comigo = estado.eu.cautelaAtual;
+  const livre = v.situacao === 'ativa' && !v.cautelaAtual;
+  const comeca = ms(res.inicio) > Date.now() ? `começa ${esc(quando(res.inicio))}` : `começou ${esc(quando(res.inicio))}; espera até ${hora(ms(res.inicio) + 30 * 60e3)}`;
+  return `<section class="caixa destaque pilha">
+    <div class="linha separa"><span class="rotulo">Sua reserva · ${comeca}</span>${selo('disponivel', 'Reservada para você')}</div>
+    <div class="linha">${chaveiro(v)}${placa(v.placa)}<span class="suave">${esc(v.modelo)}</span></div>
+    <p class="pequeno" style="margin:0">${esc(res.missao)} · até ${hora(res.fim)}</p>
+    ${comigo ? '<div class="alerta-caixa atencao">Devolva a viatura que está com você para retirar a da reserva.</div>'
+      : livre ? `<button type="button" class="primario" data-c="retirar-reserva" data-id="${res.vtrId}">Retirar agora</button>`
+      : '<div class="alerta-caixa atencao">A viatura ainda não foi devolvida por quem está com ela. A gestão foi avisada; assim que ela voltar, fica guardada para você.</div>'}
+  </section>`;
+}
+
 /* ---------- início ---------- */
 function renderInicio() {
   const caixa = $('#inicio-cautela');
   if (!caixa || !estado.eu) return;
-  let h = '';
+  let h = htmlMinhaReservaAgora();
   if (estado.eu.cautelaAtual) {
     if (!minha) { caixa.innerHTML = '<div class="caixa">Carregando a sua cautela…</div>'; return; }
     const v = estado.viaturas.find((x) => x.id === minha.vtrId) || { prefixo: minha.vtrPrefixo, modelo: '' };
@@ -102,7 +139,7 @@ function renderInicio() {
       ${podeReabrir(minha.saida) && instalado() ? `<button type="button" class="btn leve" data-c="abrir-clav">${ICONE.chave}Abrir claviculário</button>` : ''}</div>
     </section>`;
   } else {
-    const disp = disponiveis();
+    const disp = dispParaMim();
     if (ultima?.situacao === 'encerrada' && podeReabrir(ultima.devolucao) && instalado()) {
       h += `<div class="caixa linha separa"><span>Ainda não guardou a chave da ${chaveiro({ prefixo: ultima.vtrPrefixo })}?</span>
         <button type="button" class="btn" data-c="abrir-clav-dev">${ICONE.chave}Abrir claviculário</button></div>`;
@@ -114,7 +151,8 @@ function renderInicio() {
         direita: `<span class="btn peq ${i === 0 ? 'prim' : ''}">Cautelar</span>`,
       })).join('')}</div>` : '<div class="alerta-caixa atencao">Nenhuma viatura disponível no momento.</div>'}</section>`;
   }
-  const fora = porPrioridade().filter((v) => !(v.situacao === 'ativa' && !v.cautelaAtual) && v.id !== minha?.vtrId);
+  h += htmlMinhasReservas();
+  const fora = porPrioridade().filter((v) => (!(v.situacao === 'ativa' && !v.cautelaAtual) || bloqueadaParaMim(v.id)) && v.id !== minha?.vtrId);
   if (fora.length) {
     h += `<section class="secao"><h3>Indisponíveis agora (${fora.length})</h3>
       <div class="vlista">${fora.map((v) => itemViatura(v)).join('')}</div></section>`;
@@ -127,8 +165,12 @@ function itemViatura(v, o = {}) {
   let sub = `${esc(v.modelo)} · ${km(v.kmAtual)} km`;
   if (st === 'bloqueada') sub = `${SITUACOES[v.situacao] || v.situacao}${v.motivoSituacao ? ': ' + esc(v.motivoSituacao) : ''}`;
   if (st === 'cautelada') sub = `${esc(v.modelo)} · cautelada`;
+  const nota = notaReserva(v);
+  if (nota?.bloqueio && st === 'disponivel') sub = nota.texto;
+  else if (nota) sub += ' · ' + nota.texto;
   const dentro = `${figura(v)}<div><div class="meta">${chaveiro(v)}${placa(v.placa)}${o.prio ? `<span class="prio ${o.prio === 1 ? 'primeira' : ''}">${o.prio === 1 ? 'PRIORIDADE' : o.prio + 'ª NA FILA'}</span>` : ''}</div><div class="sub">${sub}</div></div><div>${o.direita ?? selo(st)}</div>`;
-  return o.acao ? `<button type="button" class="vitem ${o.sel ? 'sel' : ''}" ${o.acao}>${dentro}</button>` : `<div class="vitem">${dentro}</div>`;
+  const dentroFinal = nota?.bloqueio && st === 'disponivel' && !o.direita ? dentro.replace(selo(st), selo('bloqueada', 'Reservada')) : dentro;
+  return o.acao ? `<button type="button" class="vitem ${o.sel ? 'sel' : ''}" ${o.acao}>${dentroFinal}</button>` : `<div class="vitem">${dentroFinal}</div>`;
 }
 
 /* ---------- ações (um só ouvinte para as telas deste módulo) ---------- */
@@ -141,7 +183,8 @@ document.addEventListener('click', (e) => {
 });
 
 const ACOES = {
-  cautelar: (d) => iniciarRetirada(d.id),
+  cautelar: (d) => { const res = minhaReservaAgora(); iniciarRetirada(d.id, res?.vtrId === d.id ? res : null); },
+  'retirar-reserva': (d) => iniciarRetirada(d.id, minhaReservaAgora()),
   devolver: () => iniciarDevolucao(),
   abastecer: () => abrirAbastecimento(),
   'ver-minha': () => minha && abrirDetalheCautela(minha),
@@ -249,15 +292,20 @@ const paraLocal = (d) => { const p = (n) => String(n).padStart(2, '0'); return `
 const erroUsuario = (msg) => Object.assign(new Error(msg), { mensagemUsuario: msg });
 
 /* ---------- cautela (retirada) ---------- */
-function iniciarRetirada(vtrId) {
+function iniciarRetirada(vtrId, reserva = null) {
   if (estado.eu.cautelaAtual) return mensagem('Você já tem uma cautela aberta. Devolva antes de cautelar outra.', true);
-  const disp = disponiveis();
+  const disp = dispParaMim();
   if (!disp.length) return mensagem('Nenhuma viatura disponível no momento.', true);
-  const prev = new Date(Date.now() + 2 * 3600e3);
+  let prev = new Date(Date.now() + 2 * 3600e3);
   prev.setMinutes(Math.ceil(prev.getMinutes() / 15) * 15, 0, 0);
+  if (reserva) prev = new Date(Math.min(ms(reserva.fim), Date.now() + 24 * 3600e3 - 60e3));
+  const id = vtrId || disp[0].id;
+  const lim = limiteDevolucao(id);
+  if (lim && prev.getTime() > lim.ate) prev = new Date(lim.ate);
   rascunho = {
-    tipo: 'retirada', passo: 1, vtrId: vtrId || disp[0].id, sugerida: disp[0].id, motivo: '', motivoTxt: '',
-    missao: '', previsao: paraLocal(prev), km: null, comb: null, fotos: {}, avaria: false, avDesc: '', avGrav: 'leve', avFotos: {}, erro: '',
+    tipo: 'retirada', passo: 1, vtrId: id, sugerida: reserva ? reserva.vtrId : disp[0].id, motivo: '', motivoTxt: '',
+    missao: reserva ? reserva.missao : '', previsao: paraLocal(prev), km: null, comb: null, fotos: {}, avaria: false, avDesc: '', avGrav: 'leve', avFotos: {}, erro: '',
+    reservaId: reserva?.id || null,
   };
   renderRetirada();
   mostrar('tela-retirada');
@@ -271,9 +319,10 @@ function renderRetirada() {
   let h = `<div class="linha separa"><div><span class="rotulo">Nova cautela</span><h1 style="margin:0">Cautelar viatura</h1></div><button type="button" class="btn leve" data-c="cancelar">Cancelar</button></div>
     <ol class="passos">${nomes.map((n, i) => `<li class="${i + 1 === r.passo ? 'atual' : i + 1 < r.passo ? 'feito' : ''}">${n}</li>`).join('')}</ol>`;
   if (r.passo === 1) {
-    const disp = disponiveis();
+    const disp = dispParaMim();
     if (!disp.some((x) => x.id === r.vtrId)) { r.vtrId = disp[0]?.id; }
-    r.sugerida = disp[0]?.id;
+    r.sugerida = r.reservaId ? r.vtrId : disp[0]?.id;   // pela reserva, a viatura reservada é a certa
+    if (r.reservaId) h += '<div class="alerta-caixa info">Retirada pela sua reserva: a missão e a volta já vêm preenchidas.</div>';
     h += `<div><h2>Qual viatura você vai cautelar?</h2><p class="pequeno">Na ordem de prioridade, das mais antigas para as mais novas.</p></div>
       <div class="vlista">${disp.map((x, i) => itemViatura(x, { prio: i + 1, acao: `data-c="escolher-vtr" data-id="${x.id}"`, sel: x.id === r.vtrId,
         direita: x.id === r.vtrId ? '<span class="selo s-disponivel">Esta</span>' : '' })).join('') || '<div class="alerta-caixa atencao">Nenhuma viatura disponível.</div>'}</div>`;
@@ -289,7 +338,8 @@ function renderRetirada() {
       <div class="linha">${chaveiro(v)}${placa(v.placa)}<span class="suave">${esc(v.modelo)}</span></div>
       <label>Missão ou destino<input data-f="missao" maxlength="150" value="${esc(r.missao)}" placeholder="Ex.: condução de cadetes ao HPM"></label>
       <label>Previsão de retorno<input type="datetime-local" data-f="previsao" value="${esc(r.previsao)}"></label>
-      <div class="chips">${[1, 2, 4].map((n) => `<button type="button" class="chip" data-c="prev-rapida" data-h="${n}">daqui a ${n} h</button>`).join('')}</div>
+      <div class="chips">${[1, 2, 4].filter((n) => !limiteDevolucao(r.vtrId) || Date.now() + n * 3600e3 <= limiteDevolucao(r.vtrId).ate).map((n) => `<button type="button" class="chip" data-c="prev-rapida" data-h="${n}">daqui a ${n} h</button>`).join('')}</div>
+      ${limiteDevolucao(r.vtrId) ? `<div class="alerta-caixa atencao">A VTR ${esc(v.prefixo)} está reservada ${esc(quando(limiteDevolucao(r.vtrId).reserva.inicio))}. A volta tem que ser até <b>${esc(quando(limiteDevolucao(r.vtrId).ate))}</b>.</div>` : ''}
       <span class="dica">Passados ${ATRASO_MIN} min da previsão, a cautela fica em atraso e o gestor é avisado.</span></div>`;
   }
   if (r.passo === 3) {
@@ -329,6 +379,8 @@ function validarPasso() {
     const t = new Date(r.previsao).getTime();
     if (!t || t <= Date.now() + 60000) return 'A previsão de retorno precisa ser depois de agora.';
     if (t > Date.now() + 24 * 3600e3) return 'A previsão de retorno pode ser de até 24 horas.';
+    const lim = limiteDevolucao(r.vtrId);
+    if (lim && t > lim.ate) return `A viatura está reservada ${quando(lim.reserva.inicio)}: a volta tem que ser até ${quando(lim.ate)}.`;
   }
   if (r.passo === 3) {
     const k = Number(r.km ?? v.kmAtual);
@@ -381,6 +433,10 @@ async function bloquearPorAvaria() {
 
 async function assinarRetirada() {
   const r = rascunho, v = estado.viaturas.find((x) => x.id === r.vtrId);
+  const reservaOutro = bloqueadaParaMim(v.id);
+  if (reservaOutro) { r.erro = `A VTR ${v.prefixo} está reservada para ${reservaOutro.userNome} ${quando(reservaOutro.inicio)}. Escolha outra viatura.`; return renderRetirada(); }
+  const lim = limiteDevolucao(v.id);
+  if (lim && new Date(r.previsao).getTime() > lim.ate) { r.passo = 2; r.erro = `A volta tem que ser até ${quando(lim.ate)} por causa de uma reserva.`; return renderRetirada(); }
   const assinatura = await assinar('Assinar cautela', `Viatura ${v.prefixo} · ${r.missao.trim()}`);
   if (!assinatura) return;
   const botao = $('#btn-assinar'); if (botao) { botao.disabled = true; botao.textContent = 'Registrando…'; }
@@ -419,6 +475,7 @@ async function assinarRetirada() {
       }
       return { id, cautela, avariaId };
     });
+    if (r.reservaId) marcarCumprida(r.reservaId, res.id);
     await enfileirar('retirada', res.id, r.fotos);
     if (res.avariaId) await enfileirar('avaria', res.avariaId, r.avFotos);
     ultima = { id: res.id, ...res.cautela, saida: Timestamp.now(), assinaturaSaida: { metodo: assinatura.metodo, em: Timestamp.now() } };
