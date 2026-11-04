@@ -15,6 +15,7 @@ const VALIDADE_CMD_MS = 60000;
 const JANELA_ABRIR_MS = 10000;
 const LIMITE_ABERTA_MS = 30000;
 const HEARTBEAT_MS = 60000;
+const SEGURAR_EMERGENCIA_MS = 1000;   // o botão de emergência precisa ficar apertado 1 s (evita esbarrão)
 
 // App separado ("claviculario"): o login fica guardado à parte do login do SisCautela
 const app = initializeApp(firebaseConfig, 'claviculario');
@@ -96,6 +97,22 @@ function processarComando(c) {
   desenhar();
 }
 
+// Botão de emergência: destrava sem pedido do app (3 bipes) e registra o evento, sem uid nem cautela.
+// A abertura que vem em seguida conta como autorizada (sem alarme), mas o alarme de porta aberta demais vale.
+function emergencia() {
+  if (portaAberta) { log('botão de emergência com a porta aberta: ignorado'); return; }
+  limpar();
+  uidAtual = ''; cautelaAtual = ''; tipoAtual = 'emergencia';
+  aberturaAutorizada = true; liberadaEm = Date.now();
+  bipes(3);
+  registrarEvento('emergencia');
+  log('BOTÃO DE EMERGÊNCIA: porta destravada (10 s para abrir)');
+  timers.push(setTimeout(() => {
+    if (aberturaAutorizada && !portaAberta) { aberturaAutorizada = false; registrarEvento('liberada_sem_abertura'); desenhar(); }
+  }, JANELA_ABRIR_MS));
+  desenhar();
+}
+
 function abrir() {
   if (portaAberta) return;
   const autorizada = aberturaAutorizada && Date.now() - liberadaEm < JANELA_ABRIR_MS;
@@ -136,13 +153,22 @@ function desenhar() {
   $('#cv-titulo').textContent = portaAberta ? (alertaAtivo ? 'Porta aberta · ALARME' : 'Porta aberta')
     : destravada ? 'Destravada: abra em até 10 s' : 'Porta fechada e trancada';
   $('#cv-msg').textContent = portaAberta
-    ? (sessaoAutorizada ? `${tipoAtual === 'devolucao' ? 'Pendure a chave' : 'Retire a chave'} e feche a porta.` : 'Abertura sem pedido do app: o alarme fica ligado até fechar.')
-    : destravada ? `Pedido de ${tipoAtual} recebido. Clique em "Abrir a porta".` : 'Aguardando um pedido do app.';
+    ? (sessaoAutorizada ? (tipoAtual === 'emergencia' ? 'Aberta pelo botão de emergência. Pegue a chave e feche a porta; registre a cautela no app.' : `${tipoAtual === 'devolucao' ? 'Pendure a chave' : 'Retire a chave'} e feche a porta.`) : 'Abertura sem pedido do app: o alarme fica ligado até fechar.')
+    : destravada ? (tipoAtual === 'emergencia' ? 'Botão de emergência acionado. Clique em "Abrir a porta".' : `Pedido de ${tipoAtual} recebido. Clique em "Abrir a porta".`) : 'Aguardando um pedido do app.';
   $('#cv-fechar').disabled = !portaAberta;
   $('#cv-abrir').disabled = portaAberta;
+  $('#cv-emergencia').disabled = portaAberta || destravada;
 }
 
 $('#cv-abrir').addEventListener('click', abrir);
+// Segurar o botão de emergência por 1 s (mouse ou toque)
+let segurando = null;
+const soltar = () => { clearTimeout(segurando); segurando = null; };
+$('#cv-emergencia').addEventListener('pointerdown', (e) => {
+  e.preventDefault(); soltar();
+  segurando = setTimeout(() => { segurando = null; emergencia(); }, SEGURAR_EMERGENCIA_MS);
+});
+['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => $('#cv-emergencia').addEventListener(ev, soltar));
 $('#cv-fechar').addEventListener('click', fechar);
 $('#cv-sair').addEventListener('click', () => signOut(auth));
 

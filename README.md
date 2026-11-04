@@ -165,6 +165,24 @@ gestor também manter a lista, acrescente o UID dele ali pelo console. A conta d
 e entre com a conta do claviculário. Ele faz o papel do ESP32, com os mesmos tempos e eventos. O login
 fica só naquela aba e não interfere no login do SisCautela.
 
+### Botão de emergência
+
+Um botão no claviculário (contato NA no GPIO 33, segurado por 1 s) destrava a porta sem o app e mesmo
+sem internet: 3 bipes e o evento `emergencia` (com `ts` e, se gravado depois, `ocorreuEm`), sem `uid`.
+
+1. **Aviso a todos:** o início do app mostra "a porta foi aberta pelo botão de emergência" com
+   *Fui eu: peguei uma viatura* e *Fui eu: não retirei chave*.
+2. **Peguei uma viatura:** a cautela é registrada como de emergência (`cautelas.emergencia` = id do
+   evento), sem abrir a porta de novo e sem motivo de prioridade; depois vêm a vistoria e a devolução
+   normais. O registro `emergencias/{id}` fica `regularizada`, com a cautela.
+3. **Não retirei chave:** o militar explica o que houve (`justificada`).
+4. **Gestão:** alerta no painel na hora; a ponte (a cada 10 min) cria o registro pendente e manda e-mail.
+   Sem registro em 2 h, novo e-mail; no painel, *Encerrar* registra a observação da gestão (`encerrada`).
+5. O termo da cautela e o relatório do dia mostram as aberturas de emergência.
+
+Sem energia o botão não abre; vale a liberação mecânica. A ponte lê o Realtime Database com a conta do
+sistema (escopo `firebase.database`), e o índice `.indexOn: tipo` dos eventos fica em `database.rules.json`.
+
 ## Publicar
 
 **App:** https://siscautelaesfo-commits.github.io/siscautela/

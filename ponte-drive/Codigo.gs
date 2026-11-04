@@ -16,7 +16,7 @@
  * Instalação e configuração: LEIAME.md.
  */
 
-const VERSAO = '1.1.0';
+const VERSAO = '1.2.0';
 
 const CFG = {
   FUSO: 'America/Sao_Paulo',
@@ -31,7 +31,9 @@ const CFG = {
   HORA_RELATORIO_DIA: 19,
   HORA_TERMOS_PENDENTES: 22,
   COPIAS_GUARDADAS: 26,              // cópias semanais do banco: cerca de 6 meses
-  COLECOES: ['viaturas', 'usuarios', 'cautelas', 'avarias', 'abastecimentos', 'reservas', 'log'],
+  COLECOES: ['viaturas', 'usuarios', 'cautelas', 'avarias', 'abastecimentos', 'reservas', 'emergencias', 'log'],
+  DISPOSITIVO: 'esfo01',            // claviculário (canal claviculario/esfo01 no Realtime Database)
+  EMERGENCIA_PRAZO_MIN: 120,         // abertura pelo botão de emergência sem registro no app: novo aviso à gestão
   RESERVA_TOLERANCIA_MIN: 30,        // reserva não retirada 30 min depois do início cai (não comparecimento)
   RESERVA_FOLGA_MIN: 30,             // quem está com a viatura devolve até 30 min antes da reserva
   PERFIS_GESTAO: ['admin', 'gestor'],
@@ -359,6 +361,10 @@ function gerarTermo_(c) {
       ['Militar', nomeDe_(usuario) + ' · ' + (usuario.curso === 'OFICIAL' ? 'Oficial' : usuario.curso || '') + ' · ' + (usuario.turma || usuario.pelotao || '')],
       ['Missão', c.missao || '—'],
     ];
+    if (c.emergencia) {
+      const em = lerDoc_('emergencias/' + c.emergencia);
+      pares.push(['Abertura de emergência', 'porta aberta pelo botão do claviculário' + (em && em.em ? ' em ' + dataHora_(em.em) : '') + '; cautela registrada depois no app']);
+    }
     if (c.justificativa) pares.push(['Fora da ordem de prioridade', c.justificativa]);
     pares.push(
       ['Saída', (c.vistoriaEm ? 'chave retirada ' + dataHora_(c.saida) + ' · vistoria às ' + hora_(c.vistoriaEm) : dataHora_(c.saida)) +
@@ -450,6 +456,46 @@ function verificarAtrasos() {
     }
     atualizarDoc_('cautelas/' + c._id, { alertaAtraso: { em: new Date() } });
   });
+}
+
+/* ---------- botão de emergência do claviculário ---------- */
+// A cada 10 min: aberturas pelo botão de emergência (eventos do ESP32 no Realtime Database).
+// Cada uma ganha o registro emergencias/{id} (pendente até alguém se apresentar no app) e a gestão
+// é avisada por e-mail na hora e de novo se passar o prazo sem registro.
+function verificarEmergencias() {
+  const evs = rtdbGet_('claviculario/' + CFG.DISPOSITIVO + '/eventos', { orderBy: '"tipo"', equalTo: '"emergencia"', limitToLast: 30 }) || {};
+  const agora = Date.now(), prazo = CFG.EMERGENCIA_PRAZO_MIN * 60e3;
+  Object.keys(evs).forEach(function (id) {
+    const ts = Number(evs[id] && (evs[id].ocorreuEm || evs[id].ts)) || 0;   // ocorreuEm: hora do aperto, se gravado depois (sem internet)
+    if (!ts || agora - ts > 30 * 86400e3) return;
+    let x = lerDoc_('emergencias/' + id);
+    if (!x) {
+      try { criarDocComId_('emergencias', id, { em: new Date(ts), situacao: 'pendente', dispositivo: CFG.DISPOSITIVO }); } catch (err) { /* o app gravou ao mesmo tempo */ }
+      x = lerDoc_('emergencias/' + id);
+      if (!x) return;
+    }
+    if (!x.alertaInicial) {
+      enviarEmail_(gestores_(), '[SisCautela] Claviculário aberto pelo botão de emergência',
+        '<p>A porta do claviculário foi aberta pelo <b>botão de emergência</b> em ' + esc_(dataHora_(x.em)) + '.</p>' +
+        '<p>Situação: ' + esc_(situacaoEmergencia_(x)) + '.</p>' +
+        (x.situacao === 'pendente' ? '<p>Quem abriu deve registrar no app (o aviso aparece no início para todos). Se ninguém se apresentar em ' +
+          duracao_(prazo) + ', você recebe um novo aviso e pode encerrar a pendência com uma observação no painel da frota.</p>' : ''));
+      atualizarDoc_('emergencias/' + id, { alertaInicial: new Date() });
+    }
+    if (x.situacao === 'pendente' && agora > x.em + prazo && !x.alertaPrazo) {
+      enviarEmail_(gestores_(), '[SisCautela] Abertura de emergência ainda sem registro',
+        '<p>A porta do claviculário foi aberta pelo botão de emergência em ' + esc_(dataHora_(x.em)) + ' e, ' + esc_(duracao_(agora - x.em)) +
+        ' depois, ninguém registrou no app quem abriu nem qual chave saiu.</p><p>Confira as chaves no claviculário. No painel da frota, em Alertas, use "Encerrar" para registrar o que foi apurado.</p>');
+      atualizarDoc_('emergencias/' + id, { alertaPrazo: new Date() });
+    }
+  });
+}
+
+function situacaoEmergencia_(x) {
+  if (x.situacao === 'regularizada') return 'registrada por ' + (x.userNome || '—') + ' na cautela ' + (x.cautelaNumero || x.cautelaId || '');
+  if (x.situacao === 'justificada') return (x.userNome || '—') + ' informou que não retirou chave: ' + (x.observacao || '');
+  if (x.situacao === 'encerrada') return 'encerrada pela gestão: ' + (x.observacao || '');
+  return 'ainda sem registro de quem abriu';
 }
 
 /* ---------- reservas ---------- */
@@ -552,6 +598,9 @@ function montarRelatorioDia_(diaMs) {
     if (c.divergenciaKm) oc.push(['KM divergente', c.numero || c._id, 'Saída com ' + km_(c.kmSaida) + ' km; última devolução com ' + km_(c.divergenciaKm) + ' km']);
     if (c.justComb) oc.push(['Combustível', c.numero || c._id, 'Devolvida na reserva: ' + c.justComb]);
   });
+  const emergs = consultar_('emergencias', [['em', 'GREATER_THAN_OR_EQUAL', new Date(diaMs)]]).filter(function (x) { return x.em < fim; });
+  emergs.sort(function (a, b) { return a.em - b.em; });
+  emergs.forEach(function (x) { oc.push(['Emergência', x.cautelaNumero || '—', 'Botão de emergência ' + hora_(x.em) + ': ' + situacaoEmergencia_(x)]); });
   const kmDia = doDia.reduce(function (s, c) { return s + (c.kmRetorno != null ? c.kmRetorno - c.kmSaida : 0); }, 0);
 
   let corpo = quadros_([[doDia.length, 'cautelas no dia'], [km_(kmDia), 'km rodados'], [abertas.length, 'viaturas fora agora'], [oc.length, 'ocorrências']]);
@@ -562,7 +611,7 @@ function montarRelatorioDia_(diaMs) {
   corpo += secao_('Viaturas fora agora (chave fora do claviculário)', tabela_(['VTR', 'Cadete', 'Saída', 'Volta prevista', 'Situação'], abertas.map(function (c) {
     return [pref(c), nome(c.userId), dataHora_(c.saida), dataHora_(c.previsao), atrasada(c) ? 'Em atraso há ' + duracao_(agora - c.previsao) : 'No prazo'];
   }), abertas.map(function (c) { return atrasada(c) ? 'crit' : ''; }), 'Todas as chaves estão no claviculário.'));
-  corpo += secao_('Ocorrências', tabela_(['Tipo', 'Cautela', 'Detalhe'], oc, oc.map(function (o) { return o[0] === 'Atraso' ? 'crit' : 'warn'; }), 'Nenhuma ocorrência.'));
+  corpo += secao_('Ocorrências', tabela_(['Tipo', 'Cautela', 'Detalhe'], oc, oc.map(function (o) { return o[0] === 'Atraso' || (o[0] === 'Emergência' && o[1] === '—') ? 'crit' : 'warn'; }), 'Nenhuma ocorrência.'));
   corpo += secao_('Avarias registradas', tabela_(['VTR', 'Gravidade', 'Descrição', 'Registrada por'], avs.map(function (a) {
     return [a.vtrPrefixo || prefixoDe_(a.vtrId), a.gravidade === 'grave' ? 'Grave' : 'Leve', a.descricao, nome(a.registradaPor)];
   }), null, 'Nenhuma avaria registrada.'));
@@ -726,6 +775,7 @@ function instalar() {
 
   ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });
   ScriptApp.newTrigger('verificarAtrasos').timeBased().everyMinutes(30).create();
+  ScriptApp.newTrigger('verificarEmergencias').timeBased().everyMinutes(10).create();
   ScriptApp.newTrigger('relatorioDiario').timeBased().everyDays(1).atHour(CFG.HORA_RELATORIO_DIA).inTimezone(CFG.FUSO).create();
   ScriptApp.newTrigger('gerarTermosPendentes').timeBased().everyDays(1).atHour(CFG.HORA_TERMOS_PENDENTES).inTimezone(CFG.FUSO).create();
   ScriptApp.newTrigger('relatorioMensal').timeBased().onMonthDay(1).atHour(6).inTimezone(CFG.FUSO).create();
@@ -735,6 +785,14 @@ function instalar() {
   testarConexao();
   console.log('Instalação concluída. Pasta do sistema: ' + raiz.getUrl());
   console.log('Próximo passo: envie os brasões para a pasta SisCautela › Sistema e publique o app da Web (LEIAME.md, passo 6).');
+}
+
+// Para quem já tinha instalado: liga só a rotina do botão de emergência (sem mexer nas outras) e testa
+function ligarAvisoEmergencia() {
+  const existe = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'verificarEmergencias'; });
+  if (!existe) ScriptApp.newTrigger('verificarEmergencias').timeBased().everyMinutes(10).create();
+  verificarEmergencias();
+  console.log('Rotina do botão de emergência ' + (existe ? 'já estava ligada' : 'ligada') + ' (a cada 10 min). Leitura do claviculário OK.');
 }
 
 // Confere o acesso ao banco e ao Drive e mostra o que encontrou
@@ -794,6 +852,25 @@ function atualizarDoc_(caminho, campos) {
     method: 'patch',
     payload: JSON.stringify({ fields: paraFs_(aninhado).mapValue.fields }),
   });
+}
+
+function criarDocComId_(colecao, id, dados) {
+  return fsFetch_(fsBase_() + '/' + colecao + '?documentId=' + encodeURIComponent(id), { method: 'post', payload: JSON.stringify({ fields: paraFs_(dados).mapValue.fields }) });
+}
+
+/* Realtime Database (canal do claviculário), lido com a autorização da conta do sistema */
+function rtdbGet_(caminho, params) {
+  const base = prop_('FIREBASE_DATABASE_URL') || ('https://' + propObrig_('FIREBASE_PROJECT_ID') + '-default-rtdb.firebaseio.com');
+  const q = Object.keys(params || {}).map(function (k) { return k + '=' + encodeURIComponent(params[k]); }).join('&');
+  const r = UrlFetchApp.fetch(base + '/' + caminho + '.json' + (q ? '?' + q : ''), {
+    muteHttpExceptions: true,
+    headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+  });
+  if (r.getResponseCode() >= 300) {
+    console.error('Realtime Database ' + r.getResponseCode() + ': ' + r.getContentText().slice(0, 500));
+    throw erro_('banco', 'Não foi possível ler o claviculário agora.');
+  }
+  return JSON.parse(r.getContentText() || 'null');
 }
 
 function criarDoc_(colecao, dados) {

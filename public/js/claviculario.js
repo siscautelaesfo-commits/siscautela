@@ -4,6 +4,7 @@
 //   comando  { id, uid, cautelaId, tipo: 'retirada' | 'devolucao', criadoEm }  ← o app grava
 //   status   { porta: 'aberta' | 'fechada', alerta, ultimoComandoId, ultimoSinal } ← só o ESP32
 //   eventos  { tipo, uid, cautelaId, ts }                                        ← só o ESP32, sem apagar
+//            tipo 'emergencia': porta aberta pelo botão de emergência (sem uid nem cautela)
 // O ESP32 ignora comando repetido (mesmo id) ou com mais de 60 s, destrava a porta por até 2 s
 // e aceita a abertura em até 10 s. A lista `membros/{uid}` diz quem pode mandar abrir; ela é
 // mantida pelo app quando um administrador do claviculário abre a gestão de usuários.
@@ -169,7 +170,7 @@ function htmlAbertura(a, { tipo, prefixo }) {
   const ret = tipo === 'retirada';
   const chave = `a chave da <b>${esc(prefixo)}</b>`;
   const off = status && !online() ? '<div class="alerta-caixa atencao">O claviculário está sem sinal há mais de 3 minutos. Se a porta não abrir, procure o responsável pela frota.</div>' : '';
-  const deNovo = a.tentativa < TENTATIVAS ? '<button type="button" class="btn" data-clav="de-novo">Tentar de novo</button>' : '<p class="pequeno">Procure o responsável pela frota: ele abre pela liberação de emergência e anota no livro.</p>';
+  const deNovo = a.tentativa < TENTATIVAS ? '<button type="button" class="btn" data-clav="de-novo">Tentar de novo</button>' : '<p class="pequeno">Se for urgente, use o botão de emergência do claviculário e depois registre a abertura no app (aparece no início).</p>';
   const ETAPAS = {
     enviando: ['info', 'Enviando o pedido ao claviculário…', ''],
     aguardando: ['info', 'Aguardando o claviculário…', off],
@@ -236,12 +237,13 @@ const NOMES_EVENTO = {
   porta_aberta_demais: 'Porta aberta demais',
   abertura_nao_autorizada: 'Abertura sem autorização',
   liberada_sem_abertura: 'Liberada e não aberta',
+  emergencia: 'Botão de emergência',
 };
-const EVENTO_GRAVE = ['porta_aberta_demais', 'abertura_nao_autorizada'];
+const EVENTO_GRAVE = ['porta_aberta_demais', 'abertura_nao_autorizada', 'emergencia'];
 
 const cautelaTexto = (id) => (/^c\d+$/.test(id || '') ? numeroCautela(Number(id.slice(1))) : '');
 
-export function htmlQuadroClaviculario(nomeDe = () => '') {
+export function htmlQuadroClaviculario(nomeDe = () => '', legenda = () => '') {
   let situacao;
   if (erroLeitura) situacao = `<div class="alerta-caixa atencao">${esc(erroLeitura)}</div>`;
   else if (!status) situacao = '<div class="alerta-caixa atencao">O claviculário ainda não se conectou.</div>';
@@ -249,7 +251,7 @@ export function htmlQuadroClaviculario(nomeDe = () => '') {
   else if (status.alerta) situacao = '<div class="alerta-caixa erro">Alerta: porta aberta demais ou aberta sem autorização.</div>';
   else situacao = `<div class="alerta-caixa ok">Online · porta ${status.porta === 'aberta' ? 'aberta' : 'fechada e trancada'}</div>`;
   const lista = eventos.length ? eventos.map((e) => `<div class="alerta"><span class="ponto ${EVENTO_GRAVE.includes(e.tipo) ? 'erro' : e.tipo.startsWith('liberada') ? 'info' : e.tipo === 'porta_fechada' ? 'ok' : 'atencao'}"></span>
-      <div><b>${esc(NOMES_EVENTO[e.tipo] || e.tipo)}</b><div class="pequeno suave">${dataHora(e.ts)}${e.cautelaId ? ' · ' + esc(cautelaTexto(e.cautelaId) || e.cautelaId) : ''}${nomeDe(e.uid) ? ' · ' + esc(nomeDe(e.uid)) : ''}</div></div><span></span></div>`).join('')
+      <div><b>${esc(NOMES_EVENTO[e.tipo] || e.tipo)}</b><div class="pequeno suave">${dataHora(e.ts)}${e.cautelaId ? ' · ' + esc(cautelaTexto(e.cautelaId) || e.cautelaId) : ''}${nomeDe(e.uid) ? ' · ' + esc(nomeDe(e.uid)) : ''}${e.tipo === 'emergencia' && legenda(e.id) ? ' · ' + esc(legenda(e.id)) : ''}</div></div><span></span></div>`).join('')
     : '<p class="pequeno suave">Nenhum evento registrado ainda.</p>';
   return `<div class="caixa pilha"><h3>Claviculário</h3>${situacao}<div>${lista}</div></div>`;
 }

@@ -1,6 +1,6 @@
 rules_version = '2';
 
-// Regras de segurança do SisCautela EsFO — versão 0.4 (cautela, devolução, avarias e abastecimentos)
+// Regras de segurança do SisCautela EsFO — versão 0.7 (cautela em duas etapas, reservas e botão de emergência)
 // Princípio: tudo é bloqueado, exceto o que está liberado abaixo.
 // A ponte do Drive (Apps Script da conta do sistema) grava com a autorização da própria conta,
 // sem passar por estas regras. Os campos que só ela grava ficam bloqueados para o app.
@@ -22,6 +22,9 @@ service cloud.firestore {
     }
     function caminhoCautela(id) {
       return /databases/$(database)/documents/cautelas/$(id);
+    }
+    function caminhoEmergencia(id) {
+      return /databases/$(database)/documents/emergencias/$(id);
     }
     function caminhoAvaria(id) {
       return /databases/$(database)/documents/avarias/$(id);
@@ -258,7 +261,7 @@ service cloud.firestore {
       allow create: if ativo()
         && request.resource.data.keys().hasOnly(['seq', 'numero', 'vtrId', 'vtrPrefixo', 'userId', 'userNome',
              'missao', 'justificativa', 'saida', 'previsao', 'kmSaida', 'combSaida', 'divergenciaKm',
-             'assinaturaSaida', 'situacao', 'etapa'])
+             'assinaturaSaida', 'situacao', 'etapa', 'emergencia'])
         && request.resource.data.userId == request.auth.uid
         && request.resource.data.situacao == 'aberta'
         && request.resource.data.seq is int
@@ -281,6 +284,14 @@ service cloud.firestore {
              && request.resource.data.combSaida is int && request.resource.data.combSaida >= 0 && request.resource.data.combSaida <= 4
              && (request.resource.data.divergenciaKm == null || request.resource.data.divergenciaKm is int)))
         && assinaturaValida(request.resource.data.assinaturaSaida)
+        // Regularização de uma abertura pelo botão de emergência: o registro da abertura é gravado
+        // junto, em nome do mesmo militar e apontando para esta cautela.
+        && (!('emergencia' in request.resource.data)
+            || (request.resource.data.etapa == 'chave'
+                && request.resource.data.emergencia is string
+                && getAfter(caminhoEmergencia(request.resource.data.emergencia)).data.situacao == 'regularizada'
+                && getAfter(caminhoEmergencia(request.resource.data.emergencia)).data.cautelaId == id
+                && getAfter(caminhoEmergencia(request.resource.data.emergencia)).data.userId == request.auth.uid))
         // viatura disponível, presa a esta cautela na mesma gravação
         && get(caminhoViatura(request.resource.data.vtrId)).data.situacao == 'ativa'
         && get(caminhoViatura(request.resource.data.vtrId)).data.get('cautelaAtual', null) == null
@@ -337,6 +348,37 @@ service cloud.firestore {
         && getAfter(caminhoViatura(resource.data.vtrId)).data.get('cautelaAtual', null) == null
         && getAfter(caminhoUsuario(resource.data.userId)).data.get('cautelaAtual', null) == null;
 
+      allow delete: if false;
+    }
+
+    // ---------- aberturas pelo botão de emergência do claviculário ----------
+    // ID = id do evento `emergencia` gravado pelo ESP32 no Realtime Database. A ponte cria o registro
+    // (pendente) e avisa a gestão; quem abriu se apresenta pelo app, ou a gestão encerra.
+    function registroEmergenciaValido(d, id) {
+      return d.regularizadaEm == request.time
+        && ((d.situacao == 'regularizada' && d.userId == request.auth.uid && texto(d.userNome, 2, 60)
+             && d.cautelaId is string && texto(d.cautelaNumero, 6, 12)
+             && getAfter(caminhoCautela(d.cautelaId)).data.get('emergencia', null) == id
+             && getAfter(caminhoCautela(d.cautelaId)).data.userId == request.auth.uid)
+          || (d.situacao == 'justificada' && d.userId == request.auth.uid && texto(d.userNome, 2, 60)
+             && texto(d.observacao, 5, 300) && !('cautelaId' in d))
+          || (d.situacao == 'encerrada' && gestao() && d.encerradaPor == request.auth.uid
+             && texto(d.observacao, 5, 300) && !('cautelaId' in d)));
+    }
+    function camposEmergencia() {
+      return ['situacao', 'userId', 'userNome', 'cautelaId', 'cautelaNumero', 'observacao', 'encerradaPor', 'regularizadaEm'];
+    }
+    match /emergencias/{id} {
+      allow read: if ativo();
+      allow create: if ativo()
+        && request.resource.data.keys().hasOnly(camposEmergencia().concat(['em']))
+        && request.resource.data.em is timestamp
+        && request.resource.data.em < request.time
+        && registroEmergenciaValido(request.resource.data, id);
+      allow update: if ativo()
+        && resource.data.situacao == 'pendente'
+        && mudou().hasOnly(camposEmergencia())
+        && registroEmergenciaValido(request.resource.data, id);
       allow delete: if false;
     }
 

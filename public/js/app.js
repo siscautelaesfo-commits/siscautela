@@ -14,6 +14,7 @@ import {
 import { iniciarCautelas, pararCautelas, telasCautela } from './cautela.js';
 import { sincronizarMembros, pararClaviculario } from './claviculario.js';
 import { iniciarReservas, pararReservas, telasReserva } from './reservas.js';
+import { iniciarEmergencias, pararEmergencias } from './emergencia.js';
 import { iniciarPainel, pararPainel, telasPainel } from './painel.js';
 
 const PERFIS = {
@@ -118,6 +119,7 @@ function pararTudo() {
   pararPainel();
   pararClaviculario();
   pararReservas();
+  pararEmergencias();
   eu = null; usuarios = []; viaturas = [];
   estado.eu = null; estado.viaturas = [];
 }
@@ -193,6 +195,7 @@ function montarInicio() {
   if (!ehGestao() && pararColecao) { pararColecao(); pararColecao = null; }
   if (!pararViaturas) iniciarViaturas();
   iniciarReservas();
+  iniciarEmergencias();
   iniciarCautelas();
   if (acompanha()) iniciarPainel(); else pararPainel();
 }

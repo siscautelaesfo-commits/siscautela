@@ -22,6 +22,7 @@
           ".write": "auth != null && auth.uid === root.child('config/dispositivos/' + $dev).val()"
         },
         "eventos": {
+          ".indexOn": ["tipo"],
           ".read": "auth != null && (root.child('membros/' + auth.uid).val() === true || auth.uid === root.child('config/dispositivos/' + $dev).val())",
           "$e": {
             ".write": "auth != null && auth.uid === root.child('config/dispositivos/' + $dev).val() && !data.exists()"

@@ -13,6 +13,7 @@ import { assinar } from './assinatura.js';
 import { gravarDevolucao } from './cautela.js';
 import { ouvirStatus, ouvirEventos, htmlQuadroClaviculario, alertasClaviculario } from './claviculario.js';
 import { htmlAgenda } from './reservas.js';
+import { alertasEmergencia, legendaEvento, encerrarPelaGestao as encerrarEmergencia } from './emergencia.js';
 
 export const telasPainel = ['tela-painel'];
 
@@ -42,6 +43,7 @@ export function iniciarPainel() {
   }, (e) => console.error(e)));
   parar.push(ouvir('viaturas', atualizar));
   parar.push(ouvir('reservas', atualizar));
+  parar.push(ouvir('emergencias', atualizar));
   parar.push(ouvirStatus(() => atualizar()), ouvirEventos(() => atualizar()));
   parar.push(ouvir('encerrar-cautela', encerrarPelaGestao));
   const t = setInterval(() => { if (telaAtual() === 'tela-painel' && guia !== 'relatorios' && !$('#modal').firstChild) render(); }, 30000);
@@ -90,6 +92,7 @@ document.addEventListener('click', (e) => {
   if (d.p === 'guia') { guia = d.g; render(); }
   if (d.p === 'avaria') tratarAvaria(d.id, d.s);
   if (d.p === 'usuarios') document.getElementById('cartao-gestao')?.click();
+  if (d.p === 'emergencia') encerrarEmergencia(d.id);
 });
 document.addEventListener('change', (e) => {
   if (e.target.id === 'filtro-vtr') { filtroVtr = e.target.value; renderCautelas($('#painel-conteudo')); }
@@ -100,7 +103,7 @@ function htmlPainel() {
   const vtrs = porPrioridade();
   const st = vtrs.map((v) => statusViatura(v, cautelaDa(v.id)));
   const n = (s) => st.filter((x) => x === s).length;
-  const alertas = [];
+  const alertas = [...alertasEmergencia()];
   abertas.filter((c) => estaAtrasada(c)).forEach((c) => alertas.push(['erro', `Cautela em atraso: VTR ${c.vtrPrefixo}`, `${c.userNome} · previsão ${dataHora(c.previsao)} (${duracao(Date.now() - ms(c.previsao))} atrás)`, `data-p="cautela" data-id="${c.id}"`, 'Ver']));
   abertas.filter((c) => c.etapa === 'chave' && Date.now() > ms(c.saida) + 30 * 60e3).forEach((c) => alertas.push(['erro', `Chave da VTR ${c.vtrPrefixo} sem vistoria`, `${c.userNome} · chave retirada ${dataHora(c.saida)} (${duracao(Date.now() - ms(c.saida))} atrás)`, `data-p="cautela" data-id="${c.id}"`, 'Ver']));
   abertas.filter((c) => c.divergenciaKm != null).forEach((c) => alertas.push(['atencao', `KM divergente na VTR ${c.vtrPrefixo}`, `Saída com ${km(c.kmSaida)} km; último registro com ${km(c.divergenciaKm)} km`, `data-p="cautela" data-id="${c.id}"`, 'Ver']));
@@ -124,7 +127,7 @@ function htmlPainel() {
       <section class="pilha">
         <div class="caixa"><h3 style="margin-bottom:6px">Alertas</h3>${alertas.length ? alertas.map(([g, t, s, a, b]) => `<div class="alerta"><span class="ponto ${g}"></span><div><b>${esc(t)}</b><div class="pequeno suave">${esc(s)}</div></div>${b ? `<button type="button" class="btn peq" ${a}>${b}</button>` : '<span></span>'}</div>`).join('') : '<p>Nenhum alerta agora.</p>'}</div>
         ${htmlAgenda()}
-        ${htmlQuadroClaviculario(nomeDe)}
+        ${htmlQuadroClaviculario(nomeDe, legendaEvento)}
         <div class="caixa pilha"><h3>Relatório do dia</h3><p class="pequeno">Cautelas de hoje, viaturas fora e ocorrências, para a passagem de serviço.</p>
           <div class="linha"><button type="button" class="btn prim" data-p="hoje-pdf">${ICONE.pdf}Baixar PDF de hoje</button><button type="button" class="btn" data-p="hoje-compartilhar">${ICONE.compartilhar}Compartilhar</button></div></div>
       </section>

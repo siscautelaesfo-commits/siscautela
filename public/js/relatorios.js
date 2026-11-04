@@ -10,6 +10,7 @@ import {
   chaveiro, placa, selo, combMini, ICONE, SITUACOES, nomeMilitar, situacaoCautela
 } from './nucleo.js';
 import * as ponte from './ponte.js';
+import { registroDe } from './emergencia.js';
 
 const DIA = 86400e3;
 const BRASOES = { apmg: 'img/brasao-apmg.png', esfo: 'img/brasao-esfo.png' };
@@ -50,6 +51,7 @@ function ocorrencias(cs) {
   cs.forEach((c) => {
     if (estaAtrasada(c)) oc.push(['Atraso', c.numero, `VTR ${c.vtrPrefixo} com ${c.userNome}: previsão ${hora(c.previsao)}, ainda não devolvida`]);
     else if (devolveuAtrasado(c)) oc.push(['Atraso', c.numero, `VTR ${c.vtrPrefixo}: devolvida ${duracao(ms(c.devolucao) - ms(c.previsao))} depois da previsão`]);
+    if (c.emergencia) oc.push(['Emergência', c.numero, `VTR ${c.vtrPrefixo}: chave retirada pelo botão de emergência${registroDe(c.emergencia) ? ' ' + dataHora(registroDe(c.emergencia).em) : ''}`]);
     if (c.justificativa) oc.push(['Fora da ordem', c.numero, `VTR ${c.vtrPrefixo}: ${c.justificativa}`]);
     if (c.divergenciaKm != null) oc.push(['KM divergente', c.numero, `Saída com ${km(c.kmSaida)} km; último registro com ${km(c.divergenciaKm)} km`]);
     if (c.justComb) oc.push(['Combustível', c.numero, `Devolvida na reserva: ${c.justComb}`]);
@@ -173,6 +175,10 @@ async function fotoDataUrl(reg) {
 export async function modeloTermo(c) {
   const v = estado.viaturas.find((x) => x.id === c.vtrId) || { prefixo: c.vtrPrefixo, modelo: '', placa: '' };
   const pares = [['Viatura', `${v.prefixo} · ${v.modelo || ''}${v.placa ? ' · placa ' + v.placa : ''}`], ['Militar', c.userNome], ['Missão', c.missao]];
+  if (c.emergencia) {
+    const x = registroDe(c.emergencia);
+    pares.push(['Abertura de emergência', `porta aberta pelo botão do claviculário${x ? ` ${dataBR(x.em)} às ${hora(x.em)}` : ''}; cautela registrada depois no app`]);
+  }
   if (c.justificativa) pares.push(['Fora da ordem de prioridade', c.justificativa]);
   pares.push(['Saída', c.vistoriaEm
     ? `chave retirada ${dataBR(c.saida)} às ${hora(c.saida)} · vistoria às ${hora(c.vistoriaEm)} · ${km(c.kmSaida)} km · combustível ${COMB[c.combSaida] ?? '—'}`
