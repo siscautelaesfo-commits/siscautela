@@ -336,3 +336,63 @@ test('quem reservou cancela e solta o horário; outro usuário não cancela; ges
   await assertSucceeds(b.commit());
   await assertSucceeds(lote(gestor(), 'uid-gestor', 'Cad. Gestor', ini2, ini2 + MEIA).commit());
 });
+
+// ---- cautela em duas etapas: chave e vistoria (versão 0.6) ----
+function cautelarChave(db, uid, seq = 1) {
+  const lote = writeBatch(db);
+  const id = 'c' + seq;
+  lote.set(doc(db, 'contadores', 'cautelas'), { ultimo: seq });
+  lote.set(doc(db, 'cautelas', id), {
+    seq, numero: 'C-' + String(seq).padStart(4, '0'), vtrId: 'vtr-17692', vtrPrefixo: '17692', userId: uid, userNome: 'Cad. User',
+    missao: 'Condução ao HPM', justificativa: null, saida: serverTimestamp(), previsao: emHoras(2),
+    assinaturaSaida: { metodo: 'senha', em: serverTimestamp() }, situacao: 'aberta', etapa: 'chave'
+  });
+  lote.update(doc(db, 'viaturas', 'vtr-17692'), { cautelaAtual: id, atualizadoEm: serverTimestamp() });
+  lote.update(doc(db, 'usuarios', uid), { cautelaAtual: id });
+  return lote.commit();
+}
+function vistoriar(db, seq = 1, kmV = 2749) {
+  const lote = writeBatch(db);
+  lote.update(doc(db, 'cautelas', 'c' + seq), { etapa: 'em_uso', kmSaida: kmV, combSaida: 3, divergenciaKm: null, vistoriaEm: serverTimestamp() });
+  lote.update(doc(db, 'viaturas', 'vtr-17692'), { kmAtual: kmV, combNivel: 3, atualizadoEm: serverTimestamp() });
+  return lote.commit();
+}
+function cancelarChave(db, uid, quem, seq = 1) {
+  const lote = writeBatch(db);
+  lote.update(doc(db, 'cautelas', 'c' + seq), { situacao: 'cancelada', canceladaEm: serverTimestamp(), motivoCancelamento: 'Desistiu antes do uso', encerradaPor: quem });
+  lote.update(doc(db, 'viaturas', 'vtr-17692'), { cautelaAtual: null, atualizadoEm: serverTimestamp() });
+  lote.update(doc(db, 'usuarios', uid), { cautelaAtual: null });
+  return lote.commit();
+}
+
+test('duas etapas: chave, vistoria e devolução', async () => {
+  await prepararViatura();
+  await assertSucceeds(cautelarChave(user(), 'uid-user'));
+  await assertFails(devolver(user(), 'uid-user', 'uid-user'));          // sem vistoria não devolve
+  await assertFails(vistoriar(gestor()));                                 // vistoria só do dono
+  await assertSucceeds(vistoriar(user()));
+  await assertFails(vistoriar(user()));                                   // vistoria uma vez só
+  await assertSucceeds(devolver(user(), 'uid-user', 'uid-user'));
+});
+
+test('duas etapas: a 1ª não grava KM; desistir solta viatura e militar', async () => {
+  await prepararViatura();
+  const lote = writeBatch(user());
+  lote.set(doc(user(), 'contadores', 'cautelas'), { ultimo: 1 });
+  lote.set(doc(user(), 'cautelas', 'c1'), { seq: 1, numero: 'C-0001', vtrId: 'vtr-17692', vtrPrefixo: '17692', userId: 'uid-user', userNome: 'Cad. User',
+    missao: 'Condução', justificativa: null, saida: serverTimestamp(), previsao: emHoras(2), kmSaida: 1, combSaida: 1,
+    assinaturaSaida: { metodo: 'senha', em: serverTimestamp() }, situacao: 'aberta', etapa: 'chave' });
+  lote.update(doc(user(), 'viaturas', 'vtr-17692'), { cautelaAtual: 'c1', atualizadoEm: serverTimestamp() });
+  lote.update(doc(user(), 'usuarios', 'uid-user'), { cautelaAtual: 'c1' });
+  await assertFails(lote.commit());
+  await assertSucceeds(cautelarChave(user(), 'uid-user'));
+  await assertSucceeds(cancelarChave(user(), 'uid-user', 'uid-user'));
+  await assertSucceeds(cautelarChave(gestor(), 'uid-gestor', 2));
+});
+
+test('duas etapas: gestão cancela chave sem vistoria; depois da vistoria não cancela', async () => {
+  await prepararViatura();
+  await cautelarChave(user(), 'uid-user');
+  await vistoriar(user());
+  await assertFails(cancelarChave(gestor(), 'uid-user', 'uid-gestor'));
+});

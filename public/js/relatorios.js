@@ -7,7 +7,7 @@ import {
   db, estado, avisar, ehGestao, acompanha, $, mensagem, traduzirErro, abrirModal, fecharModal,
   esc, ms, km, reais, hora, dataBR, dataCurta, dataHora, dataHoraFixa, duracao, horas, isoDia, inicioDia,
   COMB, FOTOS, ATRASO_MIN, numeroCautela, estaAtrasada, devolveuAtrasado, porPrioridade, statusViatura, ST_TEXTO,
-  chaveiro, placa, selo, combMini, ICONE, SITUACOES, nomeMilitar
+  chaveiro, placa, selo, combMini, ICONE, SITUACOES, nomeMilitar, situacaoCautela
 } from './nucleo.js';
 import * as ponte from './ponte.js';
 
@@ -17,7 +17,7 @@ const numeroDe = (id) => (/^c\d+$/.test(id || '') ? numeroCautela(Number(id.slic
 const rodou = (c) => (c.kmRetorno != null ? c.kmRetorno - c.kmSaida : 0);
 const tempoUso = (c) => (ms(c.devolucao) || Date.now()) - ms(c.saida);
 const atrasou = (c) => estaAtrasada(c) || devolveuAtrasado(c);
-const situacaoTexto = (c) => (c.situacao === 'aberta' ? (estaAtrasada(c) ? 'Em atraso' : 'Aberta') : devolveuAtrasado(c) ? 'Devolveu atrasado' : 'Encerrada');
+const situacaoTexto = (c) => situacaoCautela(c)[1];
 const periodoTexto = (de, ate) => (de === ate ? dataBR(inicioDia(de)) : `${dataBR(inicioDia(de))} a ${dataBR(inicioDia(ate))}`);
 const assinaturaTexto = (s) => (s ? `${s.metodo === 'senha' ? 'Senha pessoal' : 'Biometria do celular'} em ${dataBR(s.em)} às ${hora(s.em)}` : '—');
 
@@ -133,7 +133,7 @@ export function modeloViatura(d, vtrId) {
     secoes: [
       { titulo: 'Dados', tipo: 'kv', pares: [['Prefixo', v.prefixo], ['Placa', v.placa || '—'], ['Modelo', v.modelo], ['Ano', v.ano || '—'], ['Prioridade', v.prioridade + 'º na fila'], ['Situação', ST_TEXTO[statusViatura(v)] + (v.situacao !== 'ativa' ? ` (${SITUACOES[v.situacao]}${v.motivoSituacao ? ': ' + v.motivoSituacao : ''})` : '')], ['Combustível', v.combNivel != null ? COMB[v.combNivel] : '—']] },
       { titulo: 'Cautelas', colunas: [['Data', 16], ['Nº', 18], ['Militar', 30], ['Missão', 58], ['KM saída', 20, 1], ['KM volta', 20, 1], ['Rodou', 14, 1], ['Situação', 18]],
-        linhas: cs.map((c) => [dataCurta(c.saida), c.numero, c.userNome, c.missao, km(c.kmSaida), km(c.kmRetorno), c.kmRetorno != null ? km(rodou(c)) : '—', c.situacao === 'aberta' ? 'Aberta' : devolveuAtrasado(c) ? 'Atraso' : 'OK']),
+        linhas: cs.map((c) => [dataCurta(c.saida), c.numero, c.userNome, c.missao, km(c.kmSaida), km(c.kmRetorno), c.kmRetorno != null ? km(rodou(c)) : '—', c.situacao === 'cancelada' ? 'Cancelada' : c.situacao === 'aberta' ? 'Aberta' : devolveuAtrasado(c) ? 'Atraso' : 'OK']),
         destaque: cs.map((c) => (atrasou(c) ? 'erro' : '')), vazio: 'Nenhuma cautela desta viatura no período.' },
       { titulo: 'Abastecimentos', colunas: [['Data', 20], ['Militar', 40], ['Litros', 20, 1], ['Valor', 28, 1], ['Posto', 82]], linhas: ab.map((a) => [dataCurta(a.em), a.userNome, km(a.litros), reais(a.valor), a.posto || '—']), vazio: 'Nenhum abastecimento no período.' },
       { titulo: 'Avarias', colunas: [['Data', 18], ['Descrição', 72], ['Gravidade', 20], ['Origem provável', 42], ['Situação', 32]],
@@ -174,7 +174,11 @@ export async function modeloTermo(c) {
   const v = estado.viaturas.find((x) => x.id === c.vtrId) || { prefixo: c.vtrPrefixo, modelo: '', placa: '' };
   const pares = [['Viatura', `${v.prefixo} · ${v.modelo || ''}${v.placa ? ' · placa ' + v.placa : ''}`], ['Militar', c.userNome], ['Missão', c.missao]];
   if (c.justificativa) pares.push(['Fora da ordem de prioridade', c.justificativa]);
-  pares.push(['Saída', `${dataBR(c.saida)} às ${hora(c.saida)} · ${km(c.kmSaida)} km · combustível ${COMB[c.combSaida]}`], ['Volta prevista', `${dataBR(c.previsao)} às ${hora(c.previsao)}`], ['Assinatura da retirada', assinaturaTexto(c.assinaturaSaida)]);
+  pares.push(['Saída', c.vistoriaEm
+    ? `chave retirada ${dataBR(c.saida)} às ${hora(c.saida)} · vistoria às ${hora(c.vistoriaEm)} · ${km(c.kmSaida)} km · combustível ${COMB[c.combSaida] ?? '—'}`
+    : `${dataBR(c.saida)} às ${hora(c.saida)} · ${c.kmSaida != null ? km(c.kmSaida) + ' km · combustível ' + (COMB[c.combSaida] ?? '—') : 'sem vistoria'}`]);
+  if (c.situacao === 'cancelada') pares.push(['Cancelada antes do uso', `${dataBR(c.canceladaEm)} às ${hora(c.canceladaEm)} · ${c.motivoCancelamento || ''}`]);
+  pares.push(['Volta prevista', `${dataBR(c.previsao)} às ${hora(c.previsao)}`], ['Assinatura da retirada', assinaturaTexto(c.assinaturaSaida)]);
   if (c.devolucao) pares.push(['Devolução', `${dataBR(c.devolucao)} às ${hora(c.devolucao)} · ${km(c.kmRetorno)} km · combustível ${COMB[c.combRetorno]}`], ['Rodou', `${km(rodou(c))} km em ${duracao(ms(c.devolucao) - ms(c.saida))}`], ['Assinatura da devolução', assinaturaTexto(c.assinaturaRetorno)]);
   if (devolveuAtrasado(c)) pares.push(['Atraso', duracao(ms(c.devolucao) - ms(c.previsao)) + ' depois da previsão']);
   if (c.justComb) pares.push(['Combustível', c.justComb]);
@@ -395,17 +399,20 @@ export async function compartilhar(m) {
  * ========================================================= */
 export function abrirDetalheCautela(c) {
   const v = estado.viaturas.find((x) => x.id === c.vtrId) || { prefixo: c.vtrPrefixo, modelo: '', placa: '' };
-  const st = c.situacao === 'aberta' ? (estaAtrasada(c) ? 'atrasada' : 'cautelada') : 'neutra';
+  const [st, stTxt] = situacaoCautela(c);
   const fotoBloco = (m) => `<div class="fotos">${FOTOS.map(([k, r]) => {
     const reg = c.arquivos?.[m]?.[k];
     return reg?.id ? `<div class="foto" data-arquivo="${esc(reg.id)}" data-rotulo="${esc(r)}">${esc(r)}<br><span class="pequeno">carregando…</span></div>` : `<div class="foto">${esc(r)}<br><span class="pequeno">${c.situacao === 'aberta' || m === 'retirada' || c.devolucao ? 'enviando…' : '—'}</span></div>`;
   }).join('')}</div>`;
   const podeEncerrar = ehGestao() && c.situacao === 'aberta' && c.userId !== estado.eu.uid;
-  const m = abrirModal(`<div class="linha separa"><h2>Cautela ${esc(c.numero)}</h2>${devolveuAtrasado(c) ? selo('atrasada', 'Devolveu atrasado') : selo(st, st === 'neutra' ? 'Encerrada' : st === 'cautelada' ? 'Aberta' : null)}</div>
+  const soChave = c.etapa === 'chave';
+  const m = abrirModal(`<div class="linha separa"><h2>Cautela ${esc(c.numero)}</h2>${selo(st, stTxt)}</div>
     <div class="linha">${chaveiro(v)}${placa(v.placa)}<span class="suave">${esc(v.modelo)}</span></div>
     <dl class="kv"><dt>Militar</dt><dd>${esc(c.userNome)}</dd><dt>Missão</dt><dd>${esc(c.missao)}</dd>
     ${c.justificativa ? `<dt>Fora da ordem</dt><dd>${esc(c.justificativa)}</dd>` : ''}
-    <dt>Saída</dt><dd>${dataHora(c.saida)} · ${km(c.kmSaida)} km · ${combMini(c.combSaida)}</dd>
+    <dt>${c.vistoriaEm || c.etapa === 'chave' ? 'Chave retirada' : 'Saída'}</dt><dd>${dataHora(c.saida)}${c.kmSaida != null && !c.vistoriaEm ? ` · ${km(c.kmSaida)} km · ${combMini(c.combSaida)}` : ''}</dd>
+    ${c.vistoriaEm ? `<dt>Vistoria</dt><dd>${dataHora(c.vistoriaEm)} · ${km(c.kmSaida)} km · ${combMini(c.combSaida)}</dd>` : c.etapa === 'chave' && c.situacao === 'aberta' ? '<dt>Vistoria</dt><dd>ainda não feita</dd>' : ''}
+    ${c.situacao === 'cancelada' ? `<dt>Cancelada</dt><dd>${dataHora(c.canceladaEm)} · ${esc(c.motivoCancelamento || '')}</dd>` : ''}
     ${c.divergenciaKm != null ? `<dt>KM divergente</dt><dd>último registro com ${km(c.divergenciaKm)} km</dd>` : ''}
     <dt>Volta prevista</dt><dd>${dataHora(c.previsao)}</dd><dt>Assinatura</dt><dd>${esc(assinaturaTexto(c.assinaturaSaida))}</dd>
     ${c.devolucao ? `<dt>Devolução</dt><dd>${dataHora(c.devolucao)} · ${km(c.kmRetorno)} km · ${combMini(c.combRetorno)}</dd><dt>Rodou</dt><dd>${km(rodou(c))} km em ${duracao(ms(c.devolucao) - ms(c.saida))}</dd><dt>Assinatura</dt><dd>${esc(assinaturaTexto(c.assinaturaRetorno))}</dd>` : ''}
@@ -415,7 +422,7 @@ export function abrirDetalheCautela(c) {
     ${c.devolucao ? `<span class="rotulo">Fotos da devolução</span>${fotoBloco('devolucao')}` : ''}
     <div class="linha separa"><button type="button" class="btn" data-fechar-modal>Fechar</button>
       <div class="linha">
-        ${podeEncerrar ? '<button type="button" class="btn perigo" id="encerrar-gestao">Encerrar pela gestão</button>' : ''}
+        ${podeEncerrar ? `<button type="button" class="btn perigo" id="encerrar-gestao">${soChave ? 'Cancelar pela gestão' : 'Encerrar pela gestão'}</button>` : ''}
         ${c.termo?.id ? '<button type="button" class="btn" id="termo-drive">Termo no Drive</button>' : ''}
         <button type="button" class="btn" id="termo-compartilhar">${ICONE.compartilhar}Compartilhar</button>
         <button type="button" class="btn prim" id="termo-pdf">${ICONE.pdf}Termo em PDF</button>

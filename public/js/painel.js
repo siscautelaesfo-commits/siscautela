@@ -6,7 +6,7 @@ import {
 import {
   db, estado, ouvir, ehGestao, $, mostrar, telaAtual, mensagem, traduzirErro, abrirModal, fecharModal,
   esc, ms, km, hora, dataHora, duracao, COMB, ATRASO_MIN, estaAtrasada, devolveuAtrasado, porPrioridade,
-  statusViatura, chaveiro, placa, figura, selo, combMini, ICONE, SITUACOES
+  statusViatura, chaveiro, placa, figura, selo, combMini, ICONE, SITUACOES, situacaoCautela
 } from './nucleo.js';
 import { abrirDetalheCautela, renderRelatorios, relatorioDeHoje, invalidarRelatorios } from './relatorios.js';
 import { assinar } from './assinatura.js';
@@ -102,6 +102,7 @@ function htmlPainel() {
   const n = (s) => st.filter((x) => x === s).length;
   const alertas = [];
   abertas.filter((c) => estaAtrasada(c)).forEach((c) => alertas.push(['erro', `Cautela em atraso: VTR ${c.vtrPrefixo}`, `${c.userNome} · previsão ${dataHora(c.previsao)} (${duracao(Date.now() - ms(c.previsao))} atrás)`, `data-p="cautela" data-id="${c.id}"`, 'Ver']));
+  abertas.filter((c) => c.etapa === 'chave' && Date.now() > ms(c.saida) + 30 * 60e3).forEach((c) => alertas.push(['erro', `Chave da VTR ${c.vtrPrefixo} sem vistoria`, `${c.userNome} · chave retirada ${dataHora(c.saida)} (${duracao(Date.now() - ms(c.saida))} atrás)`, `data-p="cautela" data-id="${c.id}"`, 'Ver']));
   abertas.filter((c) => c.divergenciaKm != null).forEach((c) => alertas.push(['atencao', `KM divergente na VTR ${c.vtrPrefixo}`, `Saída com ${km(c.kmSaida)} km; último registro com ${km(c.divergenciaKm)} km`, `data-p="cautela" data-id="${c.id}"`, 'Ver']));
   avarias.filter((a) => a.situacao === 'aberta').forEach((a) => alertas.push([a.gravidade === 'grave' ? 'erro' : 'atencao', `Avaria ${a.gravidade} na VTR ${a.vtrPrefixo}`, a.descricao, 'data-p="guia" data-g="avarias"', 'Tratar']));
   alertasClaviculario().forEach(([g, t, s]) => alertas.push([g, t, s, '', '']));
@@ -115,7 +116,7 @@ function htmlPainel() {
       <section class="pilha"><h3>Viaturas</h3><div class="vlista">${vtrs.map((v) => {
         const c = cautelaDa(v.id), s = statusViatura(v, c);
         let sub = `${esc(v.modelo)} · ${km(v.kmAtual)} km`;
-        if (c) sub = `Com ${esc(c.userNome)} desde ${hora(c.saida)} · volta prevista ${hora(c.previsao)}`;
+        if (c) sub = c.etapa === 'chave' ? `Chave com ${esc(c.userNome)} desde ${hora(c.saida)} · aguardando vistoria` : `Com ${esc(c.userNome)} desde ${hora(c.saida)} · volta prevista ${hora(c.previsao)}`;
         if (s === 'bloqueada') sub = `${SITUACOES[v.situacao]}${v.motivoSituacao ? ': ' + esc(v.motivoSituacao) : ''}`;
         const dentro = `${figura(v)}<div><div class="meta">${chaveiro(v)}${placa(v.placa)}<span class="prio">${v.prioridade}º</span></div><div class="sub">${sub}</div></div><div>${selo(s)}</div>`;
         return c ? `<button type="button" class="vitem" data-p="cautela" data-id="${c.id}">${dentro}</button>` : `<div class="vitem">${dentro}</div>`;
@@ -148,8 +149,8 @@ async function renderCautelas(caixa) {
     <label style="min-width:200px">Viatura<select id="filtro-vtr"><option value="">Todas</option>${porPrioridade().map((v) => `<option value="${v.id}" ${filtroVtr === v.id ? 'selected' : ''}>${esc(v.prefixo)} · ${esc(v.modelo)}</option>`).join('')}</select></label></div>
     <div class="tabela"><table><thead><tr><th>Nº</th><th>VTR</th><th>Militar</th><th>Saída</th><th>Missão</th><th class="d">KM</th><th>Situação</th></tr></thead><tbody>
     ${lista.map((c) => {
-      const st = c.situacao === 'aberta' ? (estaAtrasada(c) ? 'atrasada' : 'cautelada') : 'neutra';
-      return `<tr class="clica" data-p="cautela" data-id="${c.id}" tabindex="0"><td>${esc(c.numero)}</td><td>${chaveiro(c.vtrPrefixo)}</td><td>${esc(c.userNome)}</td><td>${dataHora(c.saida)}</td><td>${esc(c.missao)}${c.justificativa ? `<div class="pequeno" style="color:var(--atencao)">Fora da ordem: ${esc(c.justificativa)}</div>` : ''}</td><td class="d">${c.kmRetorno != null ? km(c.kmRetorno - c.kmSaida) : '—'}</td><td>${devolveuAtrasado(c) ? selo('atrasada', 'Devolveu atrasado') : selo(st, st === 'neutra' ? 'Encerrada' : st === 'cautelada' ? 'Aberta' : null)}</td></tr>`;
+      const [st, stTxt] = situacaoCautela(c);
+      return `<tr class="clica" data-p="cautela" data-id="${c.id}" tabindex="0"><td>${esc(c.numero)}</td><td>${chaveiro(c.vtrPrefixo)}</td><td>${esc(c.userNome)}</td><td>${dataHora(c.saida)}</td><td>${esc(c.missao)}${c.justificativa ? `<div class="pequeno" style="color:var(--atencao)">Fora da ordem: ${esc(c.justificativa)}</div>` : ''}</td><td class="d">${c.kmRetorno != null ? km(c.kmRetorno - c.kmSaida) : '—'}</td><td>${selo(st, stTxt)}</td></tr>`;
     }).join('') || '<tr><td colspan="7" class="vazio">Nenhuma cautela no período.</td></tr>'}</tbody></table></div>`;
 }
 
@@ -193,8 +194,36 @@ async function tratarAvaria(id, situacao) {
 }
 
 /* ---------- encerrar cautela pela gestão (celular perdido, militar ausente) ---------- */
+// Chave retirada sem vistoria: a gestão cancela a cautela (não há KM de saída para encerrar)
+function cancelarChavePelaGestao(c) {
+  const m = abrirModal(`<h2>Cancelar cautela ${esc(c.numero)}</h2>
+    <p class="pequeno">A chave foi retirada por ${esc(c.userNome)} ${dataHora(c.saida)}, mas a vistoria não foi feita. Cancele quando a chave já estiver de volta no claviculário.</p>
+    <label>Motivo<textarea id="canc-obs" maxlength="180" placeholder="Ex.: chave devolvida ao claviculário sem uso da viatura"></textarea></label>
+    <p class="pequeno" id="canc-erro" style="color:var(--erro)" hidden></p>
+    <div class="linha separa"><button type="button" class="btn" data-fechar-modal>Voltar</button><button type="button" class="btn perigo" id="canc-ok">Cancelar cautela</button></div>`);
+  m.querySelector('#canc-ok').addEventListener('click', async (e) => {
+    const obs = m.querySelector('#canc-obs').value.trim();
+    if (obs.length < 10) { const p = m.querySelector('#canc-erro'); p.textContent = 'Descreva o motivo.'; p.hidden = false; return; }
+    e.target.disabled = true;
+    try {
+      const lote = writeBatch(db);
+      lote.update(doc(db, 'cautelas', c.id), { situacao: 'cancelada', canceladaEm: serverTimestamp(), motivoCancelamento: ('Cancelada pela gestão: ' + obs).slice(0, 200), encerradaPor: estado.eu.uid });
+      lote.update(doc(db, 'viaturas', c.vtrId), { cautelaAtual: null, atualizadoEm: serverTimestamp() });
+      lote.update(doc(db, 'usuarios', c.userId), { cautelaAtual: null });
+      await lote.commit();
+      fecharModal();
+      mensagem(`Cautela ${c.numero} cancelada.`);
+    } catch (err) {
+      console.error(err);
+      e.target.disabled = false;
+      mensagem(traduzirErro(err), true);
+    }
+  });
+}
+
 function encerrarPelaGestao(c) {
   if (!ehGestao()) return;
+  if (c.etapa === 'chave') return cancelarChavePelaGestao(c);
   let comb = null;
   const m = abrirModal(`<h2>Encerrar cautela ${esc(c.numero)}</h2>
     <p class="pequeno">Use só quando o militar não puder registrar a devolução. Fica registrado que a gestão encerrou, e o motivo vai para o histórico.</p>

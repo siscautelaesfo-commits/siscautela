@@ -127,6 +127,15 @@ export const SITUACOES = { ativa: 'Disponível', manutencao: 'Em manutenção', 
 export const numeroCautela = (seq) => 'C-' + String(seq).padStart(4, '0');
 
 export const estaAtrasada = (c, agora = Date.now()) => c?.situacao === 'aberta' && agora > ms(c.previsao) + ATRASO_MIN * 60000;
+// Situação da cautela em texto e o selo que a acompanha
+export function situacaoCautela(c) {
+  if (c.situacao === 'cancelada') return ['neutra', 'Cancelada antes do uso'];
+  if (c.situacao === 'aberta') {
+    if (c.etapa === 'chave') return ['cautelada', 'Chave retirada · sem vistoria'];
+    return estaAtrasada(c) ? ['atrasada', 'Em atraso'] : ['cautelada', 'Aberta'];
+  }
+  return devolveuAtrasado(c) ? ['atrasada', 'Devolveu atrasado'] : ['neutra', 'Encerrada'];
+}
 export const devolveuAtrasado = (c) => !!c?.devolucao && ms(c.devolucao) > ms(c.previsao) + ATRASO_MIN * 60000;
 
 // Situação para exibir: disponível, cautelada, em atraso, bloqueada

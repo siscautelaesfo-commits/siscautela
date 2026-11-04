@@ -3,10 +3,10 @@
 Sistema de cautela de viaturas da Escola de Formação de Oficiais (EsFO – APMG – PMPR).
 Substitui o livro de cautelas e o formulário por um aplicativo web (PWA) usado no celular.
 
-**Situação:** versão 0.5 — além do acesso, usuários e viaturas: cautela e devolução com assinatura
-(biometria do celular ou senha), fotos enviadas ao Drive pela ponte, avarias, abastecimentos,
-painel da frota, relatórios em PDF e o **claviculário eletrônico**, que abre a porta das chaves
-quando a cautela ou a devolução é assinada.
+**Situação:** versão 0.6 — acesso, usuários e viaturas; cautela em **duas etapas** (chave no
+claviculário com assinatura, depois vistoria na viatura); devolução assinada; fotos no Drive pela ponte;
+avarias; abastecimentos; **reserva de viatura** para missões futuras; painel da frota; relatórios em PDF;
+e o claviculário eletrônico.
 
 ## Arquitetura (custo zero)
 
@@ -106,6 +106,27 @@ combustível, KM atual, prioridade (1 = usar primeiro), situação (`ativa`, `ma
 - **Relatórios:** do dia, uso da frota no período, ficha da viatura e histórico do militar.
   Prévia na tela, **PDF** com os brasões e **compartilhar** (menu do celular ou resumo em texto).
 - A gestão pode **encerrar uma cautela** em último caso (com motivo e assinatura).
+
+## Cautela em duas etapas
+
+1. **Chave (no claviculário):** o militar escolhe a viatura, informa a missão e a previsão e assina
+   (biometria ou senha). A cautela começa (`etapa: 'chave'`) e o claviculário abre.
+2. **Vistoria (na viatura):** KM, combustível, 5 fotos e avaria. Ao concluir, `etapa: 'em_uso'` e a viatura
+   recebe o KM e o combustível. Só depois disso a devolução é possível.
+
+Antes da vistoria o militar pode **desistir e devolver a chave** (a cautela fica `cancelada`, sem KM).
+Avaria grave na vistoria também cancela a cautela e tira a viatura de uso. Passados 30 min sem vistoria,
+a ponte avisa a gestão; a gestão pode cancelar a cautela pela ficha dela. Cautelas antigas (uma etapa)
+continuam valendo.
+
+## Reserva de viatura
+
+Qualquer militar ativo reserva uma viatura por período (blocos de 30 min, até 24 h, até 14 dias antes,
+até 2 reservas futuras). Até 1 h antes do início a viatura segue disponível, com a volta limitada a 30 min
+antes da reserva; a partir de 1 h antes, só quem reservou cautela. Sem retirada até 30 min depois do
+início, a reserva cai (não comparecimento). O banco impede duas reservas no mesmo horário: cada bloco de
+30 min de cada viatura é um documento único em `reservaBlocos`. A gestão cancela com motivo pelo painel;
+a ponte avisa por e-mail, marca não comparecimento, lembra na véspera e alerta quando a viatura não voltou.
 
 ## Claviculário eletrônico
 

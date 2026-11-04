@@ -16,7 +16,7 @@
  * Instalação e configuração: LEIAME.md.
  */
 
-const VERSAO = '1.0.0';
+const VERSAO = '1.1.0';
 
 const CFG = {
   FUSO: 'America/Sao_Paulo',
@@ -27,6 +27,7 @@ const CFG = {
   ENVIOS_POR_10MIN: 80,              // por usuário; uma cautela completa tem 10 a 14 fotos
   PRAZO_ENVIO_H: 48,                 // fotos de uma cautela aceitas até 48 h depois do fato (fila offline)
   ATRASO_MIN: 30,
+  VISTORIA_MIN: 30,                  // chave retirada sem vistoria na viatura: a gestão é avisada
   HORA_RELATORIO_DIA: 19,
   HORA_TERMOS_PENDENTES: 22,
   COPIAS_GUARDADAS: 26,              // cópias semanais do banco: cerca de 6 meses
@@ -360,7 +361,8 @@ function gerarTermo_(c) {
     ];
     if (c.justificativa) pares.push(['Fora da ordem de prioridade', c.justificativa]);
     pares.push(
-      ['Saída', dataHora_(c.saida) + ' · ' + km_(c.kmSaida) + ' km · combustível ' + (COMB[c.combSaida] || '—')],
+      ['Saída', (c.vistoriaEm ? 'chave retirada ' + dataHora_(c.saida) + ' · vistoria às ' + hora_(c.vistoriaEm) : dataHora_(c.saida)) +
+        ' · ' + km_(c.kmSaida) + ' km · combustível ' + (COMB[c.combSaida] || '—')],
       ['Volta prevista', dataHora_(c.previsao)],
       ['Assinatura da retirada', assin(c.assinaturaSaida)],
       ['Devolução', dataHora_(c.devolucao) + ' · ' + km_(c.kmRetorno) + ' km · combustível ' + (COMB[c.combRetorno] || '—')],
@@ -418,6 +420,21 @@ function verificarAtrasos() {
   try { verificarReservas_(); } catch (err) { console.error('Reservas: ' + (err && err.stack)); }
   const agora = Date.now();
   const abertas = consultar_('cautelas', [['situacao', 'EQUAL', 'aberta']]);
+  // Chave retirada e vistoria não feita
+  abertas.filter(function (c) {
+    return c.etapa === 'chave' && agora > c.saida + CFG.VISTORIA_MIN * 60e3 && !c.alertaVistoria;
+  }).forEach(function (c) {
+    const u = lerDoc_('usuarios/' + c.userId) || {};
+    const prefixo = c.vtrPrefixo || prefixoDe_(c.vtrId);
+    const texto = nomeDe_(u) + ' retirou a chave da VTR ' + prefixo + ' ' + dataHora_(c.saida) + ' e ainda não fez a vistoria (KM, combustível e fotos).' +
+      (u.telefone ? ' Contato: ' + u.telefone + '.' : '');
+    enviarEmail_(gestores_(), '[SisCautela] Chave da VTR ' + prefixo + ' retirada sem vistoria', '<p>' + esc_(texto) + '</p><p>Missão: ' + esc_(c.missao || '—') + '</p>');
+    if (u.email) {
+      enviarEmail_([u.email], '[SisCautela] Faça a vistoria da VTR ' + prefixo,
+        '<p>Você retirou a chave da VTR ' + esc_(prefixo) + ' ' + esc_(dataHora_(c.saida)) + '. Faça a vistoria no app (KM, combustível e fotos) ou, se não for usar a viatura, toque em "Desistir e devolver a chave".</p>');
+    }
+    atualizarDoc_('cautelas/' + c._id, { alertaVistoria: { em: new Date() } });
+  });
   abertas.filter(function (c) {
     return c.previsao && agora > c.previsao + CFG.ATRASO_MIN * 60e3 && !c.alertaAtraso;
   }).forEach(function (c) {
@@ -540,7 +557,7 @@ function montarRelatorioDia_(diaMs) {
   let corpo = quadros_([[doDia.length, 'cautelas no dia'], [km_(kmDia), 'km rodados'], [abertas.length, 'viaturas fora agora'], [oc.length, 'ocorrências']]);
   corpo += secao_('Cautelas do dia', tabela_(['Nº', 'VTR', 'Cadete', 'Missão', 'Saída', 'Volta', 'KM', 'Situação'], doDia.map(function (c) {
     return [c.numero || c._id, pref(c), nome(c.userId), c.missao, hora_(c.saida), c.devolucao ? hora_(c.devolucao) : '—', c.kmRetorno != null ? km_(c.kmRetorno - c.kmSaida) : '—',
-      c.situacao === 'aberta' ? (atrasada(c) ? 'Em atraso' : 'Aberta') : atrasada(c) ? 'Devolveu atrasado' : 'Encerrada'];
+      c.situacao === 'cancelada' ? 'Cancelada antes do uso' : c.situacao === 'aberta' ? (c.etapa === 'chave' ? 'Sem vistoria' : atrasada(c) ? 'Em atraso' : 'Aberta') : atrasada(c) ? 'Devolveu atrasado' : 'Encerrada'];
   }), doDia.map(function (c) { return atrasada(c) ? 'crit' : c.justificativa ? 'warn' : ''; }), 'Nenhuma cautela neste dia.'));
   corpo += secao_('Viaturas fora agora (chave fora do claviculário)', tabela_(['VTR', 'Cadete', 'Saída', 'Volta prevista', 'Situação'], abertas.map(function (c) {
     return [pref(c), nome(c.userId), dataHora_(c.saida), dataHora_(c.previsao), atrasada(c) ? 'Em atraso há ' + duracao_(agora - c.previsao) : 'No prazo'];

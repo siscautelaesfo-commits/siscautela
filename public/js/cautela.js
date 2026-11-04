@@ -5,7 +5,7 @@ import {
 import {
   db, estado, ouvir, $, mostrar, telaAtual, mensagem, traduzirErro, abrirModal, fecharModal,
   esc, ms, km, hora, dataHora, duracao, nomeMilitar, COMB, FOTOS, MOTIVOS, ATRASO_MIN, KM_ALERTA,
-  numeroCautela, estaAtrasada, disponiveis, porPrioridade, statusViatura, chaveiro, placa, figura, selo, combMini, ICONE, SITUACOES
+  numeroCautela, estaAtrasada, disponiveis, porPrioridade, statusViatura, chaveiro, placa, figura, selo, combMini, ICONE, SITUACOES, situacaoCautela
 } from './nucleo.js';
 import { assinar } from './assinatura.js';
 import * as ponte from './ponte.js';
@@ -125,7 +125,18 @@ function renderInicio() {
     if (!minha) { caixa.innerHTML = '<div class="caixa">Carregando a sua cautela…</div>'; return; }
     const v = estado.viaturas.find((x) => x.id === minha.vtrId) || { prefixo: minha.vtrPrefixo, modelo: '' };
     const atraso = estaAtrasada(minha), falta = ms(minha.previsao) - Date.now();
-    h += `<section class="caixa ${atraso ? 'critica' : 'destaque'} pilha">
+    if (emChave(minha)) {
+      const tarde = vistoriaAtrasada(minha);
+      h += `<section class="caixa ${tarde ? 'critica' : 'destaque'} pilha">
+        <div class="linha separa"><span class="rotulo">Sua cautela · ${esc(minha.numero)}</span>${selo(tarde ? 'atrasada' : 'cautelada', 'Chave retirada')}</div>
+        <div class="linha">${chaveiro(v)}${placa(v.placa)}<span class="suave">${esc(v.modelo)}</span></div>
+        <p style="margin:0">Chave retirada ${dataHora(minha.saida)}. Falta a <b>vistoria na viatura</b>: KM, combustível e fotos.</p>
+        ${tarde ? `<div class="alerta-caixa erro">Passou de ${VISTORIA_MIN} min sem vistoria e a gestão foi avisada. Faça a vistoria ou devolva a chave.</div>` : ''}
+        <button type="button" class="primario" data-c="vistoria">Fazer vistoria</button>
+        <div class="linha"><button type="button" class="btn leve" data-c="desistir">Desistir e devolver a chave</button>
+        ${podeReabrir(minha.saida) && instalado() ? `<button type="button" class="btn leve" data-c="abrir-clav">${ICONE.chave}Abrir claviculário</button>` : ''}</div>
+      </section>`;
+    } else h += `<section class="caixa ${atraso ? 'critica' : 'destaque'} pilha">
       <div class="linha separa"><span class="rotulo">Sua cautela aberta · ${esc(minha.numero)}</span>${atraso ? selo('atrasada') : selo('cautelada', 'Em andamento')}</div>
       <div class="linha">${chaveiro(v)}${placa(v.placa)}<span class="suave">${esc(v.modelo)}</span></div>
       <div class="cartoes" style="margin:0">
@@ -140,7 +151,7 @@ function renderInicio() {
     </section>`;
   } else {
     const disp = dispParaMim();
-    if (ultima?.situacao === 'encerrada' && podeReabrir(ultima.devolucao) && instalado()) {
+    if (['encerrada', 'cancelada'].includes(ultima?.situacao) && podeReabrir(ultima.devolucao || ultima.canceladaEm) && instalado()) {
       h += `<div class="caixa linha separa"><span>Ainda não guardou a chave da ${chaveiro({ prefixo: ultima.vtrPrefixo })}?</span>
         <button type="button" class="btn" data-c="abrir-clav-dev">${ICONE.chave}Abrir claviculário</button></div>`;
     }
@@ -185,6 +196,9 @@ document.addEventListener('click', (e) => {
 const ACOES = {
   cautelar: (d) => { const res = minhaReservaAgora(); iniciarRetirada(d.id, res?.vtrId === d.id ? res : null); },
   'retirar-reserva': (d) => iniciarRetirada(d.id, minhaReservaAgora()),
+  vistoria: () => iniciarVistoria(),
+  'concluir-vistoria': () => concluirVistoria(),
+  desistir: () => pedirDesistencia(),
   devolver: () => iniciarDevolucao(),
   abastecer: () => abrirAbastecimento(),
   'ver-minha': () => minha && abrirDetalheCautela(minha),
@@ -206,6 +220,7 @@ const ACOES = {
 };
 function rerender() {
   if (rascunho?.tipo === 'retirada') return renderRetirada();
+  if (rascunho?.tipo === 'vistoria') return renderVistoria();
   if (rascunho?.tipo === 'devolucao') return renderDevolucao();
   if (rascunho?.tipo === 'abastecimento') {
     const caixa = $('#cupom-foto');
@@ -239,8 +254,8 @@ document.addEventListener('change', async (e) => {
 });
 
 function avisoKm(valor) {
-  if (rascunho.tipo === 'retirada') {
-    const v = estado.viaturas.find((x) => x.id === rascunho.vtrId);
+  if (rascunho.tipo === 'retirada' || rascunho.tipo === 'vistoria') {
+    const v = estado.viaturas.find((x) => x.id === (rascunho.vtrId || minha?.vtrId));
     const box = $('#aviso-km'); if (box) box.hidden = Number(valor) === v?.kmAtual;
   } else {
     const r = Number(valor) - minha.kmSaida;
@@ -315,8 +330,8 @@ function renderRetirada() {
   const r = rascunho;
   if (!r || r.tipo !== 'retirada') return;
   const v = estado.viaturas.find((x) => x.id === r.vtrId);
-  const nomes = ['Viatura', 'Missão', 'Estado da viatura', 'Assinatura'];
-  let h = `<div class="linha separa"><div><span class="rotulo">Nova cautela</span><h1 style="margin:0">Cautelar viatura</h1></div><button type="button" class="btn leve" data-c="cancelar">Cancelar</button></div>
+  const nomes = ['Viatura', 'Missão', 'Assinatura'];
+  let h = `<div class="linha separa"><div><span class="rotulo">Nova cautela · 1ª etapa: chave</span><h1 style="margin:0">Cautelar viatura</h1></div><button type="button" class="btn leve" data-c="cancelar">Cancelar</button></div>
     <ol class="passos">${nomes.map((n, i) => `<li class="${i + 1 === r.passo ? 'atual' : i + 1 < r.passo ? 'feito' : ''}">${n}</li>`).join('')}</ol>`;
   if (r.passo === 1) {
     const disp = dispParaMim();
@@ -343,28 +358,15 @@ function renderRetirada() {
       <span class="dica">Passados ${ATRASO_MIN} min da previsão, a cautela fica em atraso e o gestor é avisado.</span></div>`;
   }
   if (r.passo === 3) {
-    const kmVal = r.km ?? v.kmAtual;
-    h += `<div class="caixa pilha">
-      <label>KM no painel<input type="number" inputmode="numeric" data-f="km" value="${esc(kmVal)}"></label>
-      <span class="dica">A última devolução registrou <b>${km(v.kmAtual)} km</b>. Confira com o painel.</span>
-      <div id="aviso-km" class="alerta-caixa atencao" ${Number(kmVal) === v.kmAtual ? 'hidden' : ''}>KM diferente do último registro. A diferença vai para o gestor.</div>
-      <div><span class="rotulo">Combustível</span>${seletorComb(r.comb)}</div>
-      <div><span class="rotulo">Fotos da viatura (5)</span><div class="fotos">${FOTOS.map(([k, t]) => blocoFoto(k, t, r.fotos[k], 'fotos')).join('')}</div></div>
-      ${blocoAvaria('Encontrou avaria antes de sair?', 'A avaria fica registrada com fotos e ligada à cautela anterior, para apuração. Avaria grave tira a viatura de uso.')}
-    </div>`;
-  }
-  if (r.passo === 4) {
     h += `<div class="caixa pilha"><h2>Confira e assine</h2>
       <dl class="kv"><dt>Viatura</dt><dd>${chaveiro(v)} ${placa(v.placa)}</dd>
       ${r.vtrId !== r.sugerida ? `<dt>Fora da ordem</dt><dd>${esc(r.motivo === 'Outro motivo' ? r.motivoTxt : r.motivo)}</dd>` : ''}
-      <dt>Missão</dt><dd>${esc(r.missao)}</dd><dt>Volta prevista</dt><dd>${dataHora(new Date(r.previsao).getTime())}</dd>
-      <dt>KM de saída</dt><dd>${km(r.km ?? v.kmAtual)}</dd><dt>Combustível</dt><dd>${combMini(r.comb)}</dd>
-      <dt>Fotos</dt><dd>${Object.keys(r.fotos).length} de 5</dd>${r.avaria ? `<dt>Avaria</dt><dd>${esc(r.avDesc)} (${r.avGrav})</dd>` : ''}</dl>
-      <p class="pequeno">Ao assinar, a viatura e a chave ficam em seu nome até a devolução assinada.</p></div>`;
+      <dt>Missão</dt><dd>${esc(r.missao)}</dd><dt>Volta prevista</dt><dd>${dataHora(new Date(r.previsao).getTime())}</dd></dl>
+      <p class="pequeno">Ao assinar, a chave e a viatura ficam em seu nome e o claviculário abre. Depois, na viatura, você faz a <b>vistoria</b> (KM, combustível e fotos) em até ${VISTORIA_MIN} min.</p></div>`;
   }
   if (r.erro) h += `<div class="alerta-caixa erro" role="alert">${esc(r.erro)}</div>`;
   h += `<div class="linha separa">${r.passo > 1 ? '<button type="button" class="btn" data-c="voltar">Voltar</button>' : '<span></span>'}
-    ${r.passo < 4 ? '<button type="button" class="btn prim" data-c="avancar">Continuar</button>' : `<button type="button" class="btn prim" data-c="assinar-retirada" id="btn-assinar">${ICONE.digital}Assinar cautela</button>`}</div>`;
+    ${r.passo < 3 ? '<button type="button" class="btn prim" data-c="avancar">Continuar</button>' : `<button type="button" class="btn prim" data-c="assinar-retirada" id="btn-assinar">${ICONE.digital}Assinar e retirar a chave</button>`}</div>`;
   $('#retirada-conteudo').innerHTML = h;
 }
 
@@ -382,53 +384,15 @@ function validarPasso() {
     const lim = limiteDevolucao(r.vtrId);
     if (lim && t > lim.ate) return `A viatura está reservada ${quando(lim.reserva.inicio)}: a volta tem que ser até ${quando(lim.ate)}.`;
   }
-  if (r.passo === 3) {
-    const k = Number(r.km ?? v.kmAtual);
-    if (!Number.isInteger(k) || k < 0) return 'Informe o KM do painel (só números).';
-    if (r.comb == null) return 'Marque o nível de combustível.';
-    const falta = fotosFaltando(r.fotos);
-    if (falta.length) return 'Faltam fotos: ' + falta.join(', ') + '.';
-    if (r.avaria && r.avDesc.trim().length < 5) return 'Descreva a avaria encontrada.';
-    if (r.avaria && !r.avFotos.f1) return 'Fotografe a avaria.';
-  }
   return '';
 }
 
 async function avancar() {
   const r = rascunho;
   r.erro = validarPasso();
-  if (!r.erro && r.passo === 3 && r.avaria && r.avGrav === 'grave') return bloquearPorAvaria();
   if (!r.erro) r.passo++;
   renderRetirada();
   window.scrollTo(0, r.erro ? document.body.scrollHeight : 0);
-}
-
-// Avaria grave encontrada antes de sair: registra, tira a viatura de uso e volta ao início
-async function bloquearPorAvaria() {
-  const r = rascunho, v = estado.viaturas.find((x) => x.id === r.vtrId);
-  const botao = $('[data-c="avancar"]'); if (botao) botao.disabled = true;
-  try {
-    const lote = writeBatch(db);
-    const avRef = doc(collection(db, 'avarias'));
-    lote.set(avRef, {
-      vtrId: v.id, vtrPrefixo: v.prefixo, cautelaId: null, origemProvavel: v.ultimaCautela || null,
-      descricao: r.avDesc.trim(), gravidade: 'grave', situacao: 'aberta', registradaPor: estado.eu.uid,
-      registradaNome: nomeMilitar(estado.eu), em: serverTimestamp(),
-    });
-    lote.update(doc(db, 'viaturas', v.id), {
-      situacao: 'manutencao', motivoSituacao: ('Avaria grave: ' + r.avDesc.trim()).slice(0, 200), avariaBloqueio: avRef.id, atualizadoEm: serverTimestamp(),
-    });
-    await lote.commit();
-    await enfileirar('avaria', avRef.id, r.avFotos);
-    rascunho = null;
-    mostrar('tela-inicio');
-    renderInicio();
-    mensagem(`VTR ${v.prefixo} tirada de uso pela avaria grave. O gestor foi avisado; escolha outra viatura.`);
-  } catch (err) {
-    console.error(err);
-    r.erro = traduzirErro(err);
-    renderRetirada();
-  }
 }
 
 async function assinarRetirada() {
@@ -440,7 +404,6 @@ async function assinarRetirada() {
   const assinatura = await assinar('Assinar cautela', `Viatura ${v.prefixo} · ${r.missao.trim()}`);
   if (!assinatura) return;
   const botao = $('#btn-assinar'); if (botao) { botao.disabled = true; botao.textContent = 'Registrando…'; }
-  const kmSaida = Number(r.km ?? v.kmAtual);
   try {
     const res = await runTransaction(db, async (tx) => {
       const refCont = doc(db, 'contadores', 'cautelas');
@@ -455,38 +418,169 @@ async function assinarRetirada() {
       const cautela = {
         seq, numero: numeroCautela(seq), vtrId: v.id, vtrPrefixo: v.prefixo, userId: estado.eu.uid, userNome: nomeMilitar(estado.eu),
         missao: r.missao.trim(), justificativa: r.vtrId !== r.sugerida ? (r.motivo === 'Outro motivo' ? r.motivoTxt.trim() : r.motivo) : null,
-        saida: serverTimestamp(), previsao: Timestamp.fromDate(new Date(r.previsao)), kmSaida, combSaida: r.comb,
-        divergenciaKm: kmSaida !== vv.kmAtual ? vv.kmAtual : null,
-        assinaturaSaida: { metodo: assinatura.metodo, em: serverTimestamp() }, situacao: 'aberta',
+        saida: serverTimestamp(), previsao: Timestamp.fromDate(new Date(r.previsao)),
+        assinaturaSaida: { metodo: assinatura.metodo, em: serverTimestamp() }, situacao: 'aberta', etapa: 'chave',
       };
       tx.set(refCont, { ultimo: seq });
       tx.set(doc(db, 'cautelas', id), cautela);
-      tx.update(refV, { cautelaAtual: id, kmAtual: kmSaida, combNivel: r.comb, atualizadoEm: serverTimestamp() });
+      tx.update(refV, { cautelaAtual: id, atualizadoEm: serverTimestamp() });
       tx.update(refU, { cautelaAtual: id });
-      let avariaId = null;
-      if (r.avaria) {
-        const avRef = doc(collection(db, 'avarias'));
-        avariaId = avRef.id;
-        tx.set(avRef, {
-          vtrId: v.id, vtrPrefixo: v.prefixo, cautelaId: id, origemProvavel: vv.ultimaCautela || null,
-          descricao: r.avDesc.trim(), gravidade: 'leve', situacao: 'aberta', registradaPor: estado.eu.uid,
-          registradaNome: nomeMilitar(estado.eu), em: serverTimestamp(),
-        });
-      }
-      return { id, cautela, avariaId };
+      return { id, cautela };
     });
     if (r.reservaId) marcarCumprida(r.reservaId, res.id);
-    await enfileirar('retirada', res.id, r.fotos);
-    if (res.avariaId) await enfileirar('avaria', res.avariaId, r.avFotos);
     ultima = { id: res.id, ...res.cautela, saida: Timestamp.now(), assinaturaSaida: { metodo: assinatura.metodo, em: Timestamp.now() } };
     rascunho = null;
-    telaConcluida('retirada', v);
+    telaConcluida('chave', v);
   } catch (err) {
     console.error(err);
     r.erro = traduzirErro(err);
     renderRetirada();
     window.scrollTo(0, document.body.scrollHeight);
   }
+}
+
+/* ---------- vistoria (2ª etapa, na viatura) ---------- */
+export const VISTORIA_MIN = 30;   // depois disso a gestão é avisada pela ponte
+const emChave = (c) => c?.situacao === 'aberta' && c.etapa === 'chave';
+export const vistoriaAtrasada = (c, agora = Date.now()) => emChave(c) && agora > ms(c.saida) + VISTORIA_MIN * 60e3;
+
+function iniciarVistoria() {
+  if (!emChave(minha)) return;
+  rascunho = { tipo: 'vistoria', km: null, comb: null, fotos: {}, avaria: false, avDesc: '', avGrav: 'leve', avFotos: {}, erro: '' };
+  renderVistoria();
+  mostrar('tela-retirada');
+}
+
+function renderVistoria() {
+  const r = rascunho, c = minha;
+  if (!r || r.tipo !== 'vistoria' || !c) return;
+  const v = estado.viaturas.find((x) => x.id === c.vtrId) || { prefixo: c.vtrPrefixo, kmAtual: 0 };
+  const kmVal = r.km ?? v.kmAtual;
+  $('#retirada-conteudo').innerHTML = `
+    <div class="linha separa"><div><span class="rotulo">Cautela ${esc(c.numero)} · 2ª etapa</span><h1 style="margin:0">Vistoria da viatura</h1></div><button type="button" class="btn leve" data-c="cancelar">Voltar</button></div>
+    <div class="caixa pilha">
+      <div class="linha">${chaveiro(v)}${placa(v.placa)}<span class="suave">chave retirada ${dataHora(c.saida)}</span></div>
+      <label>KM no painel<input type="number" inputmode="numeric" data-f="km" value="${esc(kmVal)}"></label>
+      <span class="dica">A última devolução registrou <b>${km(v.kmAtual)} km</b>. Confira com o painel.</span>
+      <div id="aviso-km" class="alerta-caixa atencao" ${Number(kmVal) === v.kmAtual ? 'hidden' : ''}>KM diferente do último registro. A diferença vai para o gestor.</div>
+      <div><span class="rotulo">Combustível</span>${seletorComb(r.comb)}</div>
+      <div><span class="rotulo">Fotos da viatura (5)</span><div class="fotos">${FOTOS.map(([k, t]) => blocoFoto(k, t, r.fotos[k], 'fotos')).join('')}</div></div>
+      ${blocoAvaria('Encontrou avaria?', 'A avaria fica registrada com fotos e ligada à cautela anterior, para apuração. Avaria grave tira a viatura de uso e cancela esta cautela.')}
+      <span class="dica">Sem internet aqui? Pode concluir: o app guarda e envia quando o sinal voltar. Só não feche o app antes.</span>
+    </div>
+    ${r.erro ? `<div class="alerta-caixa erro" role="alert">${esc(r.erro)}</div>` : ''}
+    <div class="linha separa"><button type="button" class="btn leve" data-c="desistir">Desistir e devolver a chave</button>
+      <button type="button" class="btn prim" data-c="concluir-vistoria" id="btn-vistoria">Concluir cautela</button></div>`;
+}
+
+function validarVistoria() {
+  const r = rascunho, v = estado.viaturas.find((x) => x.id === minha.vtrId);
+  const k = Number(r.km ?? v?.kmAtual);
+  if (!Number.isInteger(k) || k < 0) return 'Informe o KM do painel (só números).';
+  if (r.comb == null) return 'Marque o nível de combustível.';
+  const falta = fotosFaltando(r.fotos);
+  if (falta.length) return 'Faltam fotos: ' + falta.join(', ') + '.';
+  if (r.avaria && r.avDesc.trim().length < 5) return 'Descreva a avaria encontrada.';
+  if (r.avaria && !r.avFotos.f1) return 'Fotografe a avaria.';
+  return '';
+}
+
+async function concluirVistoria() {
+  const r = rascunho, c = minha;
+  r.erro = validarVistoria();
+  if (r.erro) { renderVistoria(); return window.scrollTo(0, document.body.scrollHeight); }
+  const v = estado.viaturas.find((x) => x.id === c.vtrId);
+  if (r.avaria && r.avGrav === 'grave') return cancelarPorAvaria();
+  const botao = $('#btn-vistoria'); if (botao) { botao.disabled = true; botao.textContent = 'Registrando…'; }
+  const kmSaida = Number(r.km ?? v.kmAtual);
+  const dados = { etapa: 'em_uso', kmSaida, combSaida: r.comb, divergenciaKm: kmSaida !== v.kmAtual ? v.kmAtual : null, vistoriaEm: serverTimestamp() };
+  try {
+    const lote = writeBatch(db);
+    lote.update(doc(db, 'cautelas', c.id), dados);
+    lote.update(doc(db, 'viaturas', v.id), { kmAtual: kmSaida, combNivel: r.comb, atualizadoEm: serverTimestamp() });
+    let avariaId = null;
+    if (r.avaria) {
+      const avRef = doc(collection(db, 'avarias'));
+      avariaId = avRef.id;
+      lote.set(avRef, {
+        vtrId: v.id, vtrPrefixo: v.prefixo, cautelaId: c.id, origemProvavel: v.ultimaCautela || null,
+        descricao: r.avDesc.trim(), gravidade: 'leve', situacao: 'aberta', registradaPor: estado.eu.uid,
+        registradaNome: nomeMilitar(estado.eu), em: serverTimestamp(),
+      });
+    }
+    await gravarLote(lote);
+    await enfileirar('retirada', c.id, r.fotos);
+    if (avariaId) await enfileirar('avaria', avariaId, r.avFotos);
+    ultima = { ...c, ...dados, vistoriaEm: Timestamp.now() };
+    rascunho = null;
+    telaConcluida('vistoria', v);
+  } catch (err) {
+    console.error(err);
+    r.erro = traduzirErro(err);
+    renderVistoria();
+    window.scrollTo(0, document.body.scrollHeight);
+  }
+}
+
+// Sem sinal na garagem: o Firestore guarda a gravação e envia quando voltar; não espera a confirmação
+// por mais de 8 s para o militar não ficar preso na tela.
+async function gravarLote(lote) {
+  const envio = lote.commit();
+  const r = await Promise.race([envio.then(() => 'ok'), new Promise((ok) => setTimeout(() => ok('espera'), 8000))]);
+  if (r === 'espera') {
+    if (navigator.onLine) await envio;   // com internet, é só lentidão: espera de verdade (e mostra erro, se houver)
+    else envio.catch((e) => console.error('gravação pendente:', e));
+  }
+}
+
+// Cancela antes do uso: desistência ou avaria grave na vistoria. A chave volta ao claviculário.
+async function cancelarAntesDoUso(motivo, avaria = null) {
+  const c = minha, v = estado.viaturas.find((x) => x.id === c.vtrId);
+  const lote = writeBatch(db);
+  let avariaId = null;
+  const dadosV = { cautelaAtual: null, atualizadoEm: serverTimestamp() };
+  if (avaria) {
+    const avRef = doc(collection(db, 'avarias'));
+    avariaId = avRef.id;
+    lote.set(avRef, {
+      vtrId: v.id, vtrPrefixo: v.prefixo, cautelaId: c.id, origemProvavel: v.ultimaCautela || null,
+      descricao: avaria.desc, gravidade: 'grave', situacao: 'aberta', registradaPor: estado.eu.uid,
+      registradaNome: nomeMilitar(estado.eu), em: serverTimestamp(),
+    });
+    Object.assign(dadosV, { situacao: 'manutencao', motivoSituacao: ('Avaria grave: ' + avaria.desc).slice(0, 200), avariaBloqueio: avRef.id });
+  }
+  lote.update(doc(db, 'cautelas', c.id), { situacao: 'cancelada', canceladaEm: serverTimestamp(), motivoCancelamento: motivo.slice(0, 200), encerradaPor: estado.eu.uid });
+  lote.update(doc(db, 'viaturas', v.id), dadosV);
+  lote.update(doc(db, 'usuarios', estado.eu.uid), { cautelaAtual: null });
+  await lote.commit();
+  if (avariaId && avaria.fotos) await enfileirar('avaria', avariaId, avaria.fotos);
+  ultima = { ...c, situacao: 'cancelada', canceladaEm: Timestamp.now(), motivoCancelamento: motivo };
+  rascunho = null;
+  telaConcluida('cancelada', v, !!avaria);
+}
+
+async function cancelarPorAvaria() {
+  const r = rascunho;
+  const botao = $('#btn-vistoria'); if (botao) { botao.disabled = true; botao.textContent = 'Registrando…'; }
+  try {
+    await cancelarAntesDoUso('Avaria grave na vistoria: ' + r.avDesc.trim(), { desc: r.avDesc.trim(), fotos: r.avFotos });
+  } catch (err) {
+    console.error(err);
+    r.erro = traduzirErro(err);
+    renderVistoria();
+  }
+}
+
+function pedirDesistencia() {
+  if (!emChave(minha)) return;
+  const v = estado.viaturas.find((x) => x.id === minha.vtrId) || { prefixo: minha.vtrPrefixo };
+  const m = abrirModal(`<h2>Desistir da cautela</h2>
+    <p>A cautela ${esc(minha.numero)} da ${chaveiro(v)} fica registrada como <b>cancelada antes do uso</b> e o claviculário abre para você pendurar a chave.</p>
+    <div class="linha separa"><button type="button" class="btn" data-fechar-modal>Voltar</button><button type="button" class="btn perigo" id="desistir-ok">Desistir e devolver a chave</button></div>`);
+  m.querySelector('#desistir-ok').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try { fecharModal(); await cancelarAntesDoUso('Desistiu antes do uso'); } catch (err) { console.error(err); mensagem(traduzirErro(err), true); }
+  });
 }
 
 async function enfileirar(momento, ref, fotos) {
@@ -627,30 +721,53 @@ export async function gravarDevolucao(c, dados, assinatura) {
 }
 
 /* ---------- concluída ---------- */
-function telaConcluida(tipo, v) {
+// tipo: 'chave' (1ª etapa), 'vistoria' (2ª etapa), 'cancelada' (antes do uso) ou 'devolucao'
+function telaConcluida(tipo, v, porAvaria = false) {
   const c = ultima;
-  $('#concluida-conteudo').innerHTML = tipo === 'retirada' ? `
-    <section class="caixa concluido">
+  const fotosTxt = !ponte.ponteLigada() ? '<p class="pequeno">As fotos ficaram guardadas no celular e sobem para o Drive assim que o envio for ligado.</p>'
+    : '<p class="pequeno">As fotos estão subindo para o Drive em segundo plano; pode guardar o celular.</p>';
+  const TELAS = {
+    chave: `<section class="caixa concluido">
       <div class="digital ok">${ICONE.ok}</div>
       <span class="rotulo">Cautela ${esc(c.numero)} assinada às ${hora(Date.now())}</span>
-      <h1 style="margin:0">Cautela registrada</h1>
+      <h1 style="margin:0">Retire a chave</h1>
       ${chaveiro(v, 'xl')}
       <div class="linha" style="justify-content:center">${placa(v.placa)}<span class="suave">${esc(v.modelo || '')}</span></div>
-      <p>A viatura e a chave estão em seu nome até a devolução. Volta prevista para ${dataHora(c.previsao)}.</p>
-      ${!ponte.ponteLigada() ? '<p class="pequeno">As fotos ficaram guardadas no celular e sobem para o Drive assim que o envio for ligado.</p>' : '<p class="pequeno">As fotos estão subindo para o Drive em segundo plano; pode guardar o celular.</p>'}
       <div id="clav-abertura" class="clav-lugar"></div>
+      <p>Agora vá até a viatura e faça a <b>vistoria</b> (KM, combustível e fotos) em até ${VISTORIA_MIN} min. Volta prevista para ${dataHora(c.previsao)}.</p>
+      <div class="linha" style="justify-content:center"><button type="button" class="btn" data-c="inicio">Ir para o início</button><button type="button" class="btn prim" data-c="vistoria">Fazer vistoria</button></div>
+    </section>`,
+    vistoria: `<section class="caixa concluido">
+      <div class="digital ok">${ICONE.ok}</div>
+      <span class="rotulo">Cautela ${esc(c.numero)} · vistoria às ${hora(Date.now())}</span>
+      <h1 style="margin:0">Cautela concluída</h1>
+      ${chaveiro(v, 'xl')}
+      <p>A viatura está em seu nome até a devolução. Volta prevista para ${dataHora(c.previsao)}.</p>
+      ${fotosTxt}
       <div class="linha" style="justify-content:center"><button type="button" class="btn" data-c="ver-ultima">Ver cautela</button><button type="button" class="btn prim" data-c="inicio">Ir para o início</button></div>
-    </section>` : `
-    <section class="caixa concluido">
+    </section>`,
+    cancelada: `<section class="caixa concluido">
+      <div class="digital ok">${ICONE.ok}</div>
+      <span class="rotulo">Cautela ${esc(c.numero)} cancelada antes do uso</span>
+      <h1 style="margin:0">Devolva a chave</h1>
+      <p>Pendure a chave da ${chaveiro(v)} no claviculário.</p>
+      ${porAvaria ? '<div class="alerta-caixa atencao">A viatura saiu de uso pela avaria grave e o gestor foi avisado. Depois de guardar a chave, cautele outra viatura.</div>' : ''}
+      <div id="clav-abertura" class="clav-lugar"></div>
+      <div class="linha" style="justify-content:center"><button type="button" class="btn prim" data-c="inicio">Ir para o início</button></div>
+    </section>`,
+    devolucao: `<section class="caixa concluido">
       <div class="digital ok">${ICONE.ok}</div>
       <h1 style="margin:0">Devolução registrada</h1>
       <p>Agora guarde a chave da ${chaveiro(v)} no claviculário.</p>
       <div id="clav-abertura" class="clav-lugar"></div>
       <dl class="kv" style="text-align:left"><dt>Rodou</dt><dd>${km(c.kmRetorno - c.kmSaida)} km</dd><dt>Duração</dt><dd>${duracao(ms(c.devolucao) - ms(c.saida))}</dd><dt>Combustível</dt><dd>${combMini(c.combRetorno)}</dd></dl>
       <div class="linha" style="justify-content:center"><button type="button" class="btn" data-c="ver-ultima">Ver cautela e termo</button><button type="button" class="btn prim" data-c="inicio">Ir para o início</button></div>
-    </section>`;
+    </section>`,
+  };
+  $('#concluida-conteudo').innerHTML = TELAS[tipo];
   mostrar('tela-concluida');
-  acompanharAbertura($('#clav-abertura'), { cautelaId: c.id, tipo, prefixo: v.prefixo, tela: 'tela-concluida' });
+  const tipoClav = { chave: 'retirada', cancelada: 'devolucao', devolucao: 'devolucao' }[tipo];
+  if (tipoClav) acompanharAbertura($('#clav-abertura'), { cautelaId: c.id, tipo: tipoClav, prefixo: v.prefixo, tela: 'tela-concluida' });
 }
 
 // Pedir a abertura de novo (porta que não abriu a tempo, app fechado antes de pegar a chave)
@@ -716,8 +833,8 @@ document.getElementById('cartao-minhas')?.addEventListener('click', async () => 
     listaMinhas = snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => b.seq - a.seq);
     caixa.innerHTML = listaMinhas.length ? listaMinhas.map((c) => {
       const v = estado.viaturas.find((x) => x.id === c.vtrId) || { prefixo: c.vtrPrefixo, modelo: '' };
-      const st = c.situacao === 'aberta' ? (estaAtrasada(c) ? 'atrasada' : 'cautelada') : 'neutra';
-      return `<button type="button" class="vitem" data-c="abrir-cautela" data-id="${c.id}">${figura(v)}<div><div class="meta">${chaveiro(v)}<span class="pequeno suave">${esc(c.numero)}</span></div><div class="sub">${dataHora(c.saida)} · ${esc(c.missao)}</div></div><div>${selo(st, st === 'neutra' ? 'Encerrada' : st === 'cautelada' ? 'Aberta' : null)}</div></button>`;
+      const [st, txt] = situacaoCautela(c);
+      return `<button type="button" class="vitem" data-c="abrir-cautela" data-id="${c.id}">${figura(v)}<div><div class="meta">${chaveiro(v)}<span class="pequeno suave">${esc(c.numero)}</span></div><div class="sub">${dataHora(c.saida)} · ${esc(c.missao)}</div></div><div>${selo(st, txt)}</div></button>`;
     }).join('') : '<p class="vazio">Você ainda não fez nenhuma cautela.</p>';
   } catch (err) {
     console.error(err);
