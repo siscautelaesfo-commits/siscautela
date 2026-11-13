@@ -1,7 +1,7 @@
 // SisCautela · painel da frota (conferente, gestor e administrador): situação ao vivo, cautelas,
 // avarias e relatórios. A gestão também trata avarias e, em último caso, encerra uma cautela.
 import {
-  collection, doc, query, where, getDocs, onSnapshot, writeBatch, serverTimestamp, Timestamp
+  collection, doc, query, where, orderBy, limit, startAfter, getDoc, getDocs, onSnapshot, writeBatch, serverTimestamp, Timestamp
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import {
   db, estado, ouvir, ehGestao, $, mostrar, telaAtual, mensagem, traduzirErro, abrirModal, fecharModal,
@@ -22,7 +22,13 @@ let avarias = [];
 let pendentes = 0;
 let guia = 'painel';
 let filtroVtr = '';
-let recentes = null;
+let recentes = null;        // cautelas da aba Cautelas, das mais novas para as mais antigas (carregadas aos poucos)
+let ultimoDoc = null;       // onde a próxima página começa
+let fimLista = false;
+let carregandoLista = false;
+let resolvidas = null;      // avarias resolvidas nos últimos 90 dias (só ao abrir a aba Avarias)
+let carregandoResolvidas = false;
+const PAGINA = 50;
 const parar = [];
 let ligado = false;
 
@@ -31,10 +37,16 @@ export function iniciarPainel() {
   ligado = true;
   parar.push(onSnapshot(query(collection(db, 'cautelas'), where('situacao', '==', 'aberta')), (s) => {
     abertas = s.docs.map((d) => ({ id: d.id, ...d.data() }));
-    recentes = null; invalidarRelatorios();
+    // A lista da aba Cautelas é atualizada só no que mudou (sem reler tudo a cada foto enviada)
+    s.docChanges().forEach((ch) => {
+      if (ch.type !== 'removed') return substituirRecente({ id: ch.doc.id, ...ch.doc.data() });
+      getDoc(doc(db, 'cautelas', ch.doc.id)).then((d) => { if (d.exists()) { substituirRecente({ id: d.id, ...d.data() }); atualizar(); } }).catch(() => {});
+    });
+    invalidarRelatorios();
     atualizar();
   }, (e) => console.error(e)));
-  parar.push(onSnapshot(collection(db, 'avarias'), (s) => {
+  // Só as avarias em aberto ficam ao vivo; as resolvidas são lidas ao abrir a aba Avarias
+  parar.push(onSnapshot(query(collection(db, 'avarias'), where('situacao', 'in', ['aberta', 'apuracao'])), (s) => {
     avarias = s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => ms(b.em) - ms(a.em));
     atualizar();
   }, (e) => console.error(e)));
@@ -52,7 +64,7 @@ export function iniciarPainel() {
 
 export function pararPainel() {
   parar.splice(0).forEach((fn) => fn());
-  ligado = false; abertas = []; avarias = []; recentes = null;
+  ligado = false; abertas = []; avarias = []; recentes = null; ultimoDoc = null; fimLista = false; resolvidas = null;
 }
 
 document.getElementById('cartao-painel')?.addEventListener('click', () => { guia = 'painel'; render(); mostrar('tela-painel'); });
@@ -76,7 +88,7 @@ function render() {
   const caixa = $('#painel-conteudo');
   if (guia === 'painel') caixa.innerHTML = htmlPainel();
   if (guia === 'cautelas') renderCautelas(caixa);
-  if (guia === 'avarias') caixa.innerHTML = htmlAvarias();
+  if (guia === 'avarias') { caixa.innerHTML = htmlAvarias(); if (resolvidas === null) carregarResolvidas(); }
   if (guia === 'relatorios') renderRelatorios(caixa);
 }
 
@@ -91,6 +103,7 @@ document.addEventListener('click', (e) => {
   if (d.p === 'hoje-compartilhar') relatorioDeHoje('compartilhar');
   if (d.p === 'guia') { guia = d.g; render(); }
   if (d.p === 'avaria') tratarAvaria(d.id, d.s);
+  if (d.p === 'mais-cautelas') carregarCautelas(true).then(() => { if (guia === 'cautelas') renderCautelas($('#painel-conteudo')); });
   if (d.p === 'usuarios') document.getElementById('cartao-gestao')?.click();
   if (d.p === 'emergencia') encerrarEmergencia(d.id);
 });
@@ -135,34 +148,76 @@ function htmlPainel() {
 }
 
 /* ---------- cautelas recentes ---------- */
+// Lidas de 50 em 50, das mais novas para as mais antigas ("Carregar mais"), para não gastar a cota diária de leituras.
+async function carregarCautelas(mais = false) {
+  if (carregandoLista || (mais && fimLista)) return;
+  carregandoLista = true;
+  try {
+    const partes = [collection(db, 'cautelas'), orderBy('saida', 'desc')];
+    if (mais && ultimoDoc) partes.push(startAfter(ultimoDoc));
+    partes.push(limit(PAGINA));
+    const s = await getDocs(query(...partes));
+    const novos = s.docs.map((d) => ({ id: d.id, ...d.data() }));
+    recentes = mais ? [...(recentes || []), ...novos.filter((c) => !(recentes || []).some((x) => x.id === c.id))] : novos;
+    recentes.sort((a, b) => b.seq - a.seq);
+    if (s.docs.length) ultimoDoc = s.docs[s.docs.length - 1];
+    fimLista = s.docs.length < PAGINA;
+  } finally {
+    carregandoLista = false;
+  }
+}
+
+function substituirRecente(c) {
+  if (!recentes) return;
+  const i = recentes.findIndex((x) => x.id === c.id);
+  if (i >= 0) recentes[i] = c; else recentes.unshift(c);
+  recentes.sort((a, b) => b.seq - a.seq);
+}
+
 async function renderCautelas(caixa) {
   if (!recentes) {
     caixa.innerHTML = '<p class="vazio">Carregando…</p>';
     try {
-      const desde = Timestamp.fromMillis(Date.now() - 90 * 86400e3);
-      const s = await getDocs(query(collection(db, 'cautelas'), where('saida', '>=', desde)));
-      recentes = s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => b.seq - a.seq);
+      await carregarCautelas();
     } catch (err) {
       caixa.innerHTML = `<p class="vazio">${esc(traduzirErro(err))}</p>`; return;
     }
   }
-  if (guia !== 'cautelas') return;
+  if (guia !== 'cautelas' || !recentes) return;
   const lista = recentes.filter((c) => !filtroVtr || c.vtrId === filtroVtr);
-  caixa.innerHTML = `<div class="linha separa" style="margin-bottom:10px"><h3>Cautelas dos últimos 90 dias (${lista.length})</h3>
+  const mais = fimLista ? '' : `<div class="linha" style="justify-content:center;margin-top:10px"><button type="button" class="btn" data-p="mais-cautelas">Carregar mais ${PAGINA}</button></div>`;
+  caixa.innerHTML = `<div class="linha separa" style="margin-bottom:10px"><h3>Cautelas mais recentes (${lista.length}${filtroVtr ? ' desta viatura entre as carregadas' : ''})</h3>
     <label style="min-width:200px">Viatura<select id="filtro-vtr"><option value="">Todas</option>${porPrioridade().map((v) => `<option value="${v.id}" ${filtroVtr === v.id ? 'selected' : ''}>${esc(v.prefixo)} · ${esc(v.modelo)}</option>`).join('')}</select></label></div>
     <div class="tabela"><table><thead><tr><th>Nº</th><th>VTR</th><th>Militar</th><th>Saída</th><th>Missão</th><th class="d">KM</th><th>Situação</th></tr></thead><tbody>
     ${lista.map((c) => {
       const [st, stTxt] = situacaoCautela(c);
       return `<tr class="clica" data-p="cautela" data-id="${c.id}" tabindex="0"><td>${esc(c.numero)}</td><td>${chaveiro(c.vtrPrefixo)}</td><td>${esc(c.userNome)}</td><td>${dataHora(c.saida)}</td><td>${esc(c.missao)}${c.justificativa ? `<div class="pequeno" style="color:var(--atencao)">Fora da ordem: ${esc(c.justificativa)}</div>` : ''}</td><td class="d">${c.kmRetorno != null ? km(c.kmRetorno - c.kmSaida) : '—'}</td><td>${selo(st, stTxt)}</td></tr>`;
-    }).join('') || '<tr><td colspan="7" class="vazio">Nenhuma cautela no período.</td></tr>'}</tbody></table></div>`;
+    }).join('') || '<tr><td colspan="7" class="vazio">Nenhuma cautela encontrada.</td></tr>'}</tbody></table></div>${mais}`;
 }
 
 /* ---------- avarias ---------- */
+async function carregarResolvidas() {
+  if (carregandoResolvidas) return;
+  carregandoResolvidas = true;
+  try {
+    const desde = Timestamp.fromMillis(Date.now() - 90 * 86400e3);
+    const s = await getDocs(query(collection(db, 'avarias'), where('em', '>=', desde)));
+    resolvidas = s.docs.map((d) => ({ id: d.id, ...d.data() })).filter((a) => a.situacao === 'resolvida');
+  } catch (err) {
+    console.error(err); resolvidas = [];
+  } finally {
+    carregandoResolvidas = false;
+  }
+  if (telaAtual() === 'tela-painel' && guia === 'avarias') render();
+}
+
 function htmlAvarias() {
   const nomes = { aberta: 'Aberta', apuracao: 'Em apuração', resolvida: 'Resolvida' };
-  const lista = [...avarias].sort((a, b) => (a.situacao === 'resolvida') - (b.situacao === 'resolvida') || ms(b.em) - ms(a.em));
-  if (!lista.length) return '<p class="vazio">Nenhuma avaria registrada.</p>';
-  return `<div class="lista">${lista.map((a) => {
+  const extras = (resolvidas || []).filter((r) => !avarias.some((a) => a.id === r.id));
+  const lista = [...avarias, ...extras].sort((a, b) => (a.situacao === 'resolvida') - (b.situacao === 'resolvida') || ms(b.em) - ms(a.em));
+  const nota = resolvidas === null ? '<p class="pequeno suave">Carregando as resolvidas…</p>' : '<p class="pequeno suave">Aparecem as avarias em aberto e as resolvidas dos últimos 90 dias.</p>';
+  if (!lista.length) return resolvidas === null ? nota : '<p class="vazio">Nenhuma avaria em aberto nem resolvida nos últimos 90 dias.</p>';
+  return `${nota}<div class="lista">${lista.map((a) => {
     const v = estado.viaturas.find((x) => x.id === a.vtrId) || {};
     const bloqueia = v.situacao === 'manutencao' && v.avariaBloqueio === a.id;
     const origem = /^c\d+$/.test(a.origemProvavel || '') ? 'C-' + a.origemProvavel.slice(1).padStart(4, '0') : '—';
@@ -189,6 +244,7 @@ async function tratarAvaria(id, situacao) {
       lote.update(doc(db, 'viaturas', v.id), { situacao: 'ativa', motivoSituacao: null, avariaBloqueio: null, atualizadoPor: estado.eu.uid, atualizadoEm: serverTimestamp() });
     }
     await lote.commit();
+    if (situacao === 'resolvida') resolvidas = null;   // relê as resolvidas para a avaria continuar na lista
     mensagem(situacao === 'resolvida' ? 'Avaria resolvida.' : 'Avaria em apuração.');
   } catch (err) {
     console.error(err);
