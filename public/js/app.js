@@ -5,11 +5,11 @@ import {
   sendEmailVerification, sendPasswordResetEmail, signOut
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-auth.js';
 import {
-  doc, setDoc, updateDoc, collection, onSnapshot, serverTimestamp, writeBatch
+  doc, setDoc, updateDoc, collection, query, where, onSnapshot, serverTimestamp, writeBatch
 } from 'https://www.gstatic.com/firebasejs/13.1.0/firebase-firestore.js';
 import { VIATURAS_INICIAIS } from './viaturas-iniciais.js';
 import {
-  auth, db, estado, avisar, $, mostrar, telaAtual, mensagem, traduzirErro, ehGestao, acompanha, SITUACOES, posto, POSTOS, CURSOS
+  auth, db, estado, avisar, ouvir, $, mostrar, telaAtual, mensagem, traduzirErro, ehGestao, acompanha, SITUACOES, posto, POSTOS, CURSOS
 } from './nucleo.js';
 import { iniciarCautelas, pararCautelas, telasCautela } from './cautela.js';
 import { sincronizarMembros, pararClaviculario } from './claviculario.js';
@@ -105,7 +105,9 @@ function apagarRascunho() {
 let eu = null;              // dados do meu usuário no banco (também em estado.eu)
 let pararMeuDoc = null;     // listener do meu documento
 let pararColecao = null;    // listener da lista de usuários (gestão)
-let usuarios = [];          // lista para a gestão
+let usuarios = [];          // lista para a gestão (carregada só na tela de gestão; o admin mantém sempre)
+let pararPendentes = null;  // contagem de cadastros pendentes (cartão de gestão no início)
+let qtdPendentes = 0;
 let filtro = 'pendente';
 let pararViaturas = null;   // listener das viaturas
 let viaturas = [];
@@ -114,6 +116,7 @@ let viaturaEditando = null;
 function pararTudo() {
   pararMeuDoc?.(); pararMeuDoc = null;
   pararColecao?.(); pararColecao = null;
+  pararPendentes?.(); pararPendentes = null; qtdPendentes = 0;
   pararViaturas?.(); pararViaturas = null;
   pararCautelas();
   pararPainel();
@@ -191,8 +194,13 @@ function montarInicio() {
     `${cursoTexto(eu)} · ${eu.turma} · nº ${eu.numero} · ${PERFIS[eu.perfil] || eu.perfil}`;
   $('#cartao-gestao').hidden = !ehGestao();
   $('#cartao-painel').hidden = !acompanha();
-  if (ehGestao() && !pararColecao) iniciarGestao();
-  if (!ehGestao() && pararColecao) { pararColecao(); pararColecao = null; }
+  if (ehGestao() && !pararPendentes) iniciarPendentes();
+  // O admin mantém a lista inteira para o claviculário (membros) ficar em dia; o gestor só carrega na tela de gestão
+  if (ehGestao() && eu.perfil === 'admin' && !pararColecao) iniciarGestao();
+  if (!ehGestao()) {
+    pararPendentes?.(); pararPendentes = null;
+    if (pararColecao) { pararColecao(); pararColecao = null; usuarios = []; }
+  }
   if (!pararViaturas) iniciarViaturas();
   iniciarReservas();
   iniciarEmergencias();
@@ -313,7 +321,18 @@ $('#form-completar').addEventListener('submit', async (e) => {
 });
 
 // ---------- gestão de usuários ----------
-$('#cartao-gestao').addEventListener('click', () => { renderizarLista(); mostrar('tela-gestao'); });
+$('#cartao-gestao').addEventListener('click', () => { if (!pararColecao) iniciarGestao(); renderizarLista(); mostrar('tela-gestao'); });
+// Gestor que sai da tela de gestão para de ouvir a lista de usuários (economiza leituras)
+ouvir('tela', (t) => {
+  if (t !== 'tela-gestao' && pararColecao && eu?.perfil !== 'admin') { pararColecao(); pararColecao = null; usuarios = []; }
+});
+
+function iniciarPendentes() {
+  pararPendentes = onSnapshot(query(collection(db, 'usuarios'), where('situacao', '==', 'pendente')), (s) => {
+    qtdPendentes = s.size;
+    atualizarContagens();
+  }, (err) => console.error(err));
+}
 
 document.querySelectorAll('.aba').forEach((aba) => aba.addEventListener('click', () => {
   filtro = aba.dataset.filtro;
@@ -339,6 +358,7 @@ const categoria = (u) => (u.situacao === 'pendente' ? 'pendente' : u.situacao ==
 function atualizarContagens() {
   const cont = { pendente: 0, ativo: 0, inativo: 0 };
   usuarios.forEach((u) => { cont[categoria(u)]++; });
+  if (!pararColecao) cont.pendente = qtdPendentes;   // lista completa ainda não carregada
   for (const k of Object.keys(cont)) $(`#cont-${k}`).textContent = cont[k] ? `(${cont[k]})` : '';
   $('#resumo-gestao').textContent = cont.pendente
     ? `${cont.pendente} cadastro${cont.pendente > 1 ? 's' : ''} aguardando aprovação`
