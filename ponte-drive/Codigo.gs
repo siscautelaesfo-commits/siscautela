@@ -16,7 +16,7 @@
  * Instalação e configuração: LEIAME.md.
  */
 
-const VERSAO = '1.2.0';
+const VERSAO = '1.3.0';
 
 const CFG = {
   FUSO: 'America/Sao_Paulo',
@@ -31,6 +31,9 @@ const CFG = {
   HORA_RELATORIO_DIA: 19,
   HORA_TERMOS_PENDENTES: 22,
   COPIAS_GUARDADAS: 26,              // cópias semanais do banco: cerca de 6 meses
+  COPIA_COMPLETA_DIAS: 27,           // cópia completa a cada 4 semanas; nas outras, só o que pode ter mudado
+  COPIA_JANELA_DIAS: 35,             // na cópia semanal: cautelas, reservas e abastecimentos dos últimos 35 dias
+  COPIA_PARCIAL: { cautelas: 'saida', reservas: 'fim', abastecimentos: 'em' },
   COLECOES: ['viaturas', 'usuarios', 'cautelas', 'avarias', 'abastecimentos', 'reservas', 'emergencias', 'log'],
   DISPOSITIVO: 'esfo01',            // claviculário (canal claviculario/esfo01 no Realtime Database)
   EMERGENCIA_PRAZO_MIN: 120,         // abertura pelo botão de emergência sem registro no app: novo aviso à gestão
@@ -465,9 +468,15 @@ function verificarAtrasos() {
 function verificarEmergencias() {
   const evs = rtdbGet_('claviculario/' + CFG.DISPOSITIVO + '/eventos', { orderBy: '"tipo"', equalTo: '"emergencia"', limitToLast: 30 }) || {};
   const agora = Date.now(), prazo = CFG.EMERGENCIA_PRAZO_MIN * 60e3;
+  // Emergências que já não pedem nada (avisada e registrada, ou avisada duas vezes) não são relidas a cada 10 min
+  const props = PropertiesService.getScriptProperties();
+  let feitas = [];
+  try { feitas = JSON.parse(props.getProperty('EMERG_CONCLUIDAS') || '[]'); } catch (err) { feitas = []; }
+  const novasFeitas = [];
   Object.keys(evs).forEach(function (id) {
     const ts = Number(evs[id] && (evs[id].ocorreuEm || evs[id].ts)) || 0;   // ocorreuEm: hora do aperto, se gravado depois (sem internet)
     if (!ts || agora - ts > 30 * 86400e3) return;
+    if (feitas.indexOf(id) >= 0) { novasFeitas.push(id); return; }
     let x = lerDoc_('emergencias/' + id);
     if (!x) {
       try { criarDocComId_('emergencias', id, { em: new Date(ts), situacao: 'pendente', dispositivo: CFG.DISPOSITIVO }); } catch (err) { /* o app gravou ao mesmo tempo */ }
@@ -487,8 +496,11 @@ function verificarEmergencias() {
         '<p>A porta do claviculário foi aberta pelo botão de emergência em ' + esc_(dataHora_(x.em)) + ' e, ' + esc_(duracao_(agora - x.em)) +
         ' depois, ninguém registrou no app quem abriu nem qual chave saiu.</p><p>Confira as chaves no claviculário. No painel da frota, em Alertas, use "Encerrar" para registrar o que foi apurado.</p>');
       atualizarDoc_('emergencias/' + id, { alertaPrazo: new Date() });
+      x.alertaPrazo = true;
     }
+    if (x.situacao !== 'pendente' || x.alertaPrazo) novasFeitas.push(id);
   });
+  props.setProperty('EMERG_CONCLUIDAS', JSON.stringify(novasFeitas));
 }
 
 function situacaoEmergencia_(x) {
@@ -538,9 +550,10 @@ function verificarReservas_() {
       }
     }
   });
-  // Rede de segurança: canceladas pela gestão cujos horários não foram soltos na hora
-  consultar_('reservas', [['situacao', 'EQUAL', 'cancelada']]).filter(function (r) {
-    return r.fim > agora && !r.blocosLiberados;
+  // Rede de segurança: canceladas pela gestão cujos horários não foram soltos na hora.
+  // Lê só reservas que ainda não terminaram (as antigas não importam e só gastariam leituras).
+  consultar_('reservas', [['fim', 'GREATER_THAN', new Date(agora)]]).filter(function (r) {
+    return r.situacao === 'cancelada' && !r.blocosLiberados;
   }).forEach(function (r) {
     liberarBlocos_(r);
     atualizarDoc_('reservas/' + r._id, { blocosLiberados: true });
@@ -683,16 +696,36 @@ function gerarTermosPendentes() {
     });
 }
 
-// Domingo 3 h: cópia do banco em JSON compactado (para restaurar) e em planilha (para consultar)
+// Domingo 3 h: cópia do banco em JSON compactado (para restaurar) e em planilha (para consultar).
+// Para não ler o banco inteiro toda semana (o Firestore gratuito permite 50 mil leituras por dia):
+//  - a cada 4 semanas, cópia COMPLETA de todas as coleções, menos o log;
+//  - nas outras semanas, cópia SEMANAL: coleções pequenas inteiras e só as cautelas, reservas e
+//    abastecimentos dos últimos 35 dias (o que ainda pode mudar);
+//  - o log entra sempre só com as linhas novas desde a cópia anterior.
+// Para restaurar: a completa mais recente, depois as semanais seguintes por ordem de data (o mesmo _id na
+// mais nova vale) e o log de todas as cópias.
 function copiaSeguranca() {
+  const props = PropertiesService.getScriptProperties();
+  const agora = Date.now();
+  const ultimaCompleta = Number(props.getProperty('COPIA_COMPLETA_EM') || 0);
+  const completa = !ultimaCompleta || agora - ultimaCompleta > CFG.COPIA_COMPLETA_DIAS * 86400e3;
+  const logDesde = Number(props.getProperty('COPIA_LOG_ATE') || 0) || (agora - 8 * 86400e3);
+  const janela = new Date(agora - CFG.COPIA_JANELA_DIAS * 86400e3);
   const dados = {};
-  CFG.COLECOES.forEach(function (col) { dados[col] = listarColecao_(col); });
-  const data = Utilities.formatDate(new Date(), CFG.FUSO, 'yyyy-MM-dd');
+  CFG.COLECOES.forEach(function (col) {
+    if (col === 'log') dados.log = consultarDesde_('log', 'em', new Date(logDesde - 3600e3));   // 1 h de folga
+    else if (!completa && CFG.COPIA_PARCIAL[col]) dados[col] = consultarDesde_(col, CFG.COPIA_PARCIAL[col], janela);
+    else dados[col] = listarColecao_(col);
+  });
+  const tipo = completa ? 'completa' : 'semanal';
+  const data = Utilities.formatDate(new Date(), CFG.FUSO, 'yyyy-MM-dd') + '_' + tipo;
   const pasta = pasta_(PASTAS.copias);
 
-  const json = Utilities.newBlob(JSON.stringify({ versao: VERSAO, geradoEm: new Date().toISOString(), dados: dados }), 'application/json', data + '_banco.json');
+  const meta = { versao: VERSAO, tipo: tipo, geradoEm: new Date(agora).toISOString(), logDesde: new Date(logDesde - 3600e3).toISOString() };
+  if (!completa) meta.janelaDesde = janela.toISOString();
+  const json = Utilities.newBlob(JSON.stringify(Object.assign(meta, { dados: dados })), 'application/json', data + '_banco.json');
   pasta.createFile(Utilities.zip([json], data + '_banco.zip'))
-    .setDescription(JSON.stringify({ sistema: 'SisCautela', tipo: 'copia', dono: 'gestao' }));
+    .setDescription(JSON.stringify({ sistema: 'SisCautela', tipo: 'copia', copia: tipo, dono: 'gestao' }));
 
   const planilha = SpreadsheetApp.create(data + '_banco');
   CFG.COLECOES.forEach(function (col, i) {
@@ -721,6 +754,11 @@ function copiaSeguranca() {
   while (it.hasNext()) arquivos.push(it.next());
   arquivos.sort(function (a, b) { return b.getDateCreated() - a.getDateCreated(); });
   arquivos.slice(CFG.COPIAS_GUARDADAS * 2).forEach(function (f) { f.setTrashed(true); });
+
+  // Só marca o ponto de partida da próxima cópia depois que esta foi salva
+  props.setProperty('COPIA_LOG_ATE', String(agora));
+  if (completa) props.setProperty('COPIA_COMPLETA_EM', String(agora));
+  console.log('Cópia ' + tipo + ': ' + CFG.COLECOES.map(function (c) { return c + ' ' + dados[c].length; }).join(', '));
 }
 
 /**
@@ -887,6 +925,27 @@ function consultar_(colecao, filtros) {
   if (fs.length > 1) consulta.structuredQuery.where = { compositeFilter: { op: 'AND', filters: fs } };
   const r = fsFetch_(fsBase_() + ':runQuery', { method: 'post', payload: JSON.stringify(consulta) }) || [];
   return r.filter(function (x) { return x.document; }).map(function (x) { return doc_(x.document); });
+}
+
+// Documentos com campo >= desde, em páginas de 1000 (ordem do campo e do id), sem limite de quantidade
+function consultarDesde_(colecao, campo, desde) {
+  const docs = [];
+  let cursor = null;
+  for (let pagina = 0; pagina < 200; pagina++) {
+    const q = {
+      from: [{ collectionId: colecao }],
+      where: { fieldFilter: { field: { fieldPath: campo }, op: 'GREATER_THAN_OR_EQUAL', value: paraFs_(desde) } },
+      orderBy: [{ field: { fieldPath: campo }, direction: 'ASCENDING' }, { field: { fieldPath: '__name__' }, direction: 'ASCENDING' }],
+      limit: 1000,
+    };
+    if (cursor) q.startAt = { values: cursor, before: false };
+    const r = (fsFetch_(fsBase_() + ':runQuery', { method: 'post', payload: JSON.stringify({ structuredQuery: q }) }) || []).filter(function (x) { return x.document; });
+    r.forEach(function (x) { docs.push(doc_(x.document)); });
+    if (r.length < 1000) break;
+    const ult = r[r.length - 1].document;
+    cursor = [ult.fields[campo], { referenceValue: ult.name }];
+  }
+  return docs;
 }
 
 function listarColecao_(colecao) {
