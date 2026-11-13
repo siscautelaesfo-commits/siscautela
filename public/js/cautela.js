@@ -209,7 +209,6 @@ const ACOES = {
   cancelar: () => { rascunho = null; mostrar('tela-inicio'); renderInicio(); },
   'escolher-vtr': (d) => { rascunho.vtrId = d.id; rascunho.km = null; rascunho.erro = ''; renderRetirada(); },
   motivo: (d) => { rascunho.motivo = d.m; renderRetirada(); },
-  'prev-rapida': (d) => { rascunho.previsao = paraLocal(new Date(Date.now() + Number(d.h) * 3600e3)); renderRetirada(); },
   comb: (d) => { rascunho.comb = Number(d.n); rascunho.erro = ''; rerender(); },
   grav: (d) => { rascunho.avGrav = d.g; rerender(); },
   voltar: () => { rascunho.passo--; rascunho.erro = ''; renderRetirada(); window.scrollTo(0, 0); },
@@ -319,15 +318,17 @@ function iniciarRetirada(vtrId, reserva = null, emergenciaId = null) {
   if (estado.eu.cautelaAtual) return mensagem('Você já tem uma cautela aberta. Devolva antes de cautelar outra.', true);
   const disp = emergenciaId ? disponiveis() : dispParaMim();
   if (!disp.length) return mensagem('Nenhuma viatura disponível no momento.', true);
-  let prev = new Date(Date.now() + 2 * 3600e3);
-  prev.setMinutes(Math.ceil(prev.getMinutes() / 15) * 15, 0, 0);
-  if (reserva) prev = new Date(Math.min(ms(reserva.fim), Date.now() + 24 * 3600e3 - 60e3));
+  // A previsão de devolução começa vazia e o militar informa. Pela reserva, já vem com o fim da reserva.
   const id = vtrId || disp[0].id;
-  const lim = limiteDevolucao(id);
-  if (lim && prev.getTime() > lim.ate) prev = new Date(lim.ate);
+  let prev = null;
+  if (reserva) {
+    prev = new Date(Math.min(ms(reserva.fim), Date.now() + 24 * 3600e3 - 60e3));
+    const lim = limiteDevolucao(id);
+    if (lim && prev.getTime() > lim.ate) prev = new Date(lim.ate);
+  }
   rascunho = {
     tipo: 'retirada', passo: 1, vtrId: id, sugerida: reserva ? reserva.vtrId : disp[0].id, motivo: '', motivoTxt: '',
-    missao: reserva ? reserva.missao : '', previsao: paraLocal(prev), km: null, comb: null, fotos: {}, avaria: false, avDesc: '', avGrav: 'leve', avFotos: {}, erro: '',
+    missao: reserva ? reserva.missao : '', previsao: prev ? paraLocal(prev) : '', km: null, comb: null, fotos: {}, avaria: false, avDesc: '', avGrav: 'leve', avFotos: {}, erro: '',
     reservaId: reserva?.id || null, emergenciaId,
   };
   renderRetirada();
@@ -362,8 +363,8 @@ function renderRetirada() {
     h += `<div class="caixa pilha">
       <div class="linha">${chaveiro(v)}${placa(v.placa)}<span class="suave">${esc(v.modelo)}</span></div>
       <label>Missão ou destino<input data-f="missao" maxlength="150" value="${esc(r.missao)}" placeholder="Ex.: condução de cadetes ao HPM"></label>
-      <label>Previsão de retorno<input type="datetime-local" data-f="previsao" value="${esc(r.previsao)}"></label>
-      <div class="chips">${[1, 2, 4].filter((n) => !limiteDevolucao(r.vtrId) || Date.now() + n * 3600e3 <= limiteDevolucao(r.vtrId).ate).map((n) => `<button type="button" class="chip" data-c="prev-rapida" data-h="${n}">daqui a ${n} h</button>`).join('')}</div>
+      <label>Data e hora previstas para a devolução<input type="datetime-local" data-f="previsao" required value="${esc(r.previsao)}" min="${paraLocal(new Date())}" max="${paraLocal(new Date(Math.min(Date.now() + 24 * 3600e3, (!r.emergenciaId && limiteDevolucao(r.vtrId)?.ate) || Infinity)))}"></label>
+      <span class="dica">Obrigatório. Até 24 horas a partir de agora.</span>
       ${limiteDevolucao(r.vtrId) && !r.emergenciaId ? `<div class="alerta-caixa atencao">A VTR ${esc(v.prefixo)} está reservada ${esc(quando(limiteDevolucao(r.vtrId).reserva.inicio))}. A volta tem que ser até <b>${esc(quando(limiteDevolucao(r.vtrId).ate))}</b>.</div>` : ''}
       <span class="dica">Passados ${ATRASO_MIN} min da previsão, a cautela fica em atraso e o gestor é avisado.</span></div>`;
   }
@@ -389,9 +390,10 @@ function validarPasso() {
   }
   if (r.passo === 2) {
     if (r.missao.trim().length < 3) return 'Informe a missão ou o destino.';
+    if (!r.previsao) return 'Informe a data e a hora previstas para a devolução.';
     const t = new Date(r.previsao).getTime();
-    if (!t || t <= Date.now() + 60000) return 'A previsão de retorno precisa ser depois de agora.';
-    if (t > Date.now() + 24 * 3600e3) return 'A previsão de retorno pode ser de até 24 horas.';
+    if (!t || t <= Date.now() + 60000) return 'A data e a hora previstas para a devolução precisam ser depois de agora.';
+    if (t > Date.now() + 24 * 3600e3) return 'A devolução prevista pode ser de até 24 horas a partir de agora.';
     const lim = r.emergenciaId ? null : limiteDevolucao(r.vtrId);
     if (lim && t > lim.ate) return `A viatura está reservada ${quando(lim.reserva.inicio)}: a volta tem que ser até ${quando(lim.ate)}.`;
   }
