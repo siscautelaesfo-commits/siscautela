@@ -31,7 +31,7 @@ let parar = null;
 /* ---------- dados ---------- */
 export function iniciarReservas() {
   if (parar) return;
-  const desde = Timestamp.fromMillis(Date.now() - 7 * 86400e3);   // uma semana para trás: não comparecimentos recentes
+  const desde = Timestamp.fromMillis(Date.now() - 2 * 86400e3);   // dois dias para trás: não comparecimentos recentes (menos leituras)
   parar = onSnapshot(query(collection(db, 'reservas'), where('fim', '>=', desde)), (s) => {
     reservas = s.docs.map((d) => ({ id: d.id, ...d.data() })).sort((a, b) => ms(a.inicio) - ms(b.inicio));
     avisar('reservas', reservas);
